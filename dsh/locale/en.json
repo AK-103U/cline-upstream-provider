@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Cline upstream provider",
+    "description": "Shows the upstream provider Cline's gateway routed each model call to, under the composer (per session)."
+  }
+}

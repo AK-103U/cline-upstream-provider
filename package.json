@@ -1,0 +1,77 @@
+{
+  "name": "@ak-103u/cline-upstream-provider",
+  "version": "0.1.0",
+  "description": "See which provider really serves your requests behind the Cline gateway — a DeepSeek Harness plugin and a pi extension in one repository.",
+  "type": "module",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "pi-package",
+    "deepseek-harness",
+    "dsh-plugin",
+    "cline",
+    "cline-pass",
+    "provider",
+    "routing"
+  ],
+  "icon": "icon.png",
+  "exports": {
+    ".": "./dsh/index.js",
+    "./client": "./dsh/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./dsh/locale/*.json"
+  },
+  "files": [
+    "dsh",
+    "pi",
+    "icon.png",
+    "docs",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./pi/cline-upstream-provider.ts"
+    ]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./dsh/cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
+  },
+  "author": "AK-103U <2191776589@qq.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AK-103U/cline-upstream-provider.git"
+  },
+  "homepage": "https://github.com/AK-103U/cline-upstream-provider#readme",
+  "contributors": [
+    "AK-103U <2191776589@qq.com>",
+    "xxxkop <2191776589@qq.com>"
+  ],
+  "bugs": {
+    "url": "https://github.com/AK-103U/cline-upstream-provider/issues"
+  }
+}

@@ -1,0 +1,5 @@
+# Bundle patch layer: this row loads index.js as the Host half, and the
+# `dsh.client` declaration makes the web app load ./client.js as the browser half.
+- insert:
+    - id: cline-upstream-provider
+      name: "@ak-103u/cline-upstream-provider"
