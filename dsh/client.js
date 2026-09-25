@@ -3,7 +3,7 @@
  * each with its own mark and brand colour.
  */
 window.__ModuleLoader__.load({
-  id: 'cline-upstream-provider',
+  id: '@ak-103u/cline-upstream-provider',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
