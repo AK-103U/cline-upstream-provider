@@ -1,6 +1,6 @@
 {
   "name": "@ak-103u/cline-upstream-provider",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "See which provider really serves your requests behind the Cline gateway — a DeepSeek Harness plugin and a pi extension in one repository.",
   "type": "module",
   "license": "MIT",
@@ -26,6 +26,7 @@
   "files": [
     "dsh",
     "pi",
+    "extensions",
     "icon.png",
     "docs",
     "README.md",
@@ -34,7 +35,7 @@
   ],
   "pi": {
     "extensions": [
-      "./pi/cline-upstream-provider.ts"
+      "./extensions/index.ts"
     ]
   },
   "dsh": {

@@ -10,8 +10,8 @@
  * Install:
  *   pi install npm:@ak-103u/cline-upstream-provider
  *   pi install git:github.com/AK-103U/cline-upstream-provider
- *   pi -e ./pi/cline-upstream-provider.ts        # try once, without settings
- *   # or copy this file into ~/.pi/agent/extensions/
+ *   pi -e ./extensions/index.ts                 # try once, without settings
+ *   # or copy ./pi/cline-upstream-provider.ts into ~/.pi/agent/extensions/
  *
  * It replaces pi's default footer with two lines:
  *   line 1: cwd, git branch, model, and the Cline route chain
