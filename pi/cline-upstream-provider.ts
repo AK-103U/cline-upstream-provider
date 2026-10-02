@@ -10,8 +10,10 @@
  * Install:
  *   pi install npm:@ak-103u/cline-upstream-provider
  *   pi install git:github.com/AK-103U/cline-upstream-provider
+ *   pi install /abs/path/to/cline-upstream-provider   # local, no copy, offline
  *   pi -e ./extensions/index.ts                 # try once, without settings
- *   # or copy ./pi/cline-upstream-provider.ts into ~/.pi/agent/extensions/
+ *   # or copy ./pi/cline-upstream-provider.ts AND ./pi/cline-usage.ts flat into
+ *   # ~/.pi/agent/extensions/ (the second file is a relative import of the first)
  *
  * It replaces pi's default footer with two lines:
  *   line 1: cwd, git branch, model, and the Cline route chain
@@ -19,12 +21,20 @@
  *   line 2: context usage, tokens, cache usage, and cost (left)
  *           plus the last-response throughput (right-aligned)
  *
+ * With a Cline API key in models.json it also shows the Cline Pass quota as a
+ * text-only badge after the cost (`5h 8% · 7d 26% · 月 21%`), reports threshold
+ * crossings and plan changes with a notification, and adds the single
+ * `/cline-upstream-provider` command: no argument opens a bilingual panel with
+ * the account, route, plan and all three limit windows, and
+ * `/cline-upstream-provider route` prints the route chain.
+ *
  * The DeepSeek Harness half of the same repository shows the same decision under
  * the composer, per Session; see the repository README.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { registerClineUsage } from "./cline-usage.ts";
 
 const CLINE_CHAT_URL = "https://api.cline.bot/api/v1/chat/completions";
 const CLINE_BASE_URL = "https://api.cline.bot/api/v1";
@@ -429,6 +439,13 @@ export default function (pi: ExtensionAPI) {
   let lastThroughputRender = 0;
 
   const refreshFooter = () => requestFooterRender?.();
+  // Cline Pass quota: footer badge, the /cline-upstream-provider panel, and
+  // usage notifications. onChange repaints the footer when a fetch or the panel
+  // language changes it.
+  const clineUsage = registerClineUsage(pi, {
+    onChange: () => refreshFooter(),
+    route: () => (routeChain.length > 0 ? formatRouteChain() : undefined),
+  });
   const stopRouteSpinner = () => {
     if (routeSpinnerTimer) {
       clearInterval(routeSpinnerTimer);
@@ -590,20 +607,32 @@ export default function (pi: ExtensionAPI) {
           const firstLine = alignLeftAndRight(left, right, width);
 
           const totals = usageTotals(ctx);
-          const secondLeft = [
+          const separator = theme.fg("dim", "  │  ");
+          // Hide the cost entirely when the rounded display would be $0.000.
+          const costPart = totals.cost >= 0.0005
+            ? theme.fg("warning", `$${totals.cost.toFixed(3)}`)
+            : undefined;
+          const head = [
             theme.fg("accent", formatContext(ctx)),
             theme.fg("success", `↑${formatTokenCount(totals.input)} ↓${formatTokenCount(totals.output)} tokens`),
             theme.fg("muted", totals.cacheWrite > 0
               ? `R ${formatCacheTokens(totals.cacheRead)} / W ${formatCacheTokens(totals.cacheWrite)}`
               : `R ${formatCacheTokens(totals.cacheRead)}`),
-            // Hide the cost entirely when the rounded display would be $0.000.
-            totals.cost >= 0.0005 ? theme.fg("warning", `$${totals.cost.toFixed(3)}`) : undefined,
-          ].filter((part): part is string => Boolean(part)).join(theme.fg("dim", "  │  "));
+            costPart,
+          ].filter((part): part is string => Boolean(part)).join(separator);
 
           const throughput = liveThroughput ?? lastThroughput;
           const throughputLabel = throughput !== undefined
             ? theme.fg("accent", `⚡ ${formatThroughput(throughput)} tok/s`)
             : "";
+
+          // Glue the quota badge after the cost and give it the width left over
+          // by the fixed parts and the right-aligned throughput; it drops the
+          // wider windows instead of being cut off mid-percentage.
+          const badgeGap = head ? (costPart ? 2 : visibleWidth(separator)) : 0;
+          const badgeBudget = width - visibleWidth(head) - visibleWidth(throughputLabel) - badgeGap - 1;
+          const badge = clineUsage.getBadge(theme, badgeBudget);
+          const secondLeft = badge ? `${head}${costPart ? "  " : separator}${badge}` : head;
 
           return [
             firstLine,
@@ -727,17 +756,6 @@ export default function (pi: ExtensionAPI) {
     if (DEBUG) {
       console.error(`[cline-route] 🔀 Cline → ${route.upstream} (${route.pipeline}) responseModel=${route.responseModel ?? "-"}`);
     }
-  });
-
-  pi.registerCommand("cline-route", {
-    description: "Show the Cline Pass upstream route chain",
-    handler: async (_args, ctx) => {
-      if (routeChain.length > 0) {
-        ctx.ui.notify(formatRouteChain(), "info");
-      } else {
-        ctx.ui.notify("尚未捕获到 cline-pass/* 的 Cline 路由", "info");
-      }
-    },
   });
 
   pi.on("session_shutdown", () => {
