@@ -1,59 +1,76 @@
-name: Publish to npm and GitHub Release
+name: Publish
 
-# Publishing is tag-driven: pushing a `v*` tag publishes the tagged commit and
-# creates a GitHub Release with the npm tarball attached. GitHub adds the
-# source archives (zip/tar.gz) automatically; there is no build step in this
-# repository, so `npm pack` is the whole "build".
+# Tag-driven release: pushing `vX.Y.Z` publishes the tagged commit to npm and
+# creates a GitHub Release with the packed tarball attached.
 #
-# Requires the repository secret `NPM_TOKEN`: a granular access token with
-# read/write access to packages and 2FA bypass (or an automation token).
+# Authentication is npm trusted publishing (OIDC): the job trades its GitHub
+# identity for a short-lived npm credential, so no NPM_TOKEN secret is stored
+# and provenance is produced automatically. One-time setup on npmjs.com:
+# package Settings -> Trusted Publisher -> GitHub Actions with owner `AK-103U`,
+# repository `cline-upstream-provider`, workflow `publish.yml`, and Environment
+# left empty (this workflow declares no `environment:`).
 #
-# Alternative without a secret: npm trusted publishing (OIDC). Configure the
-# trusted publisher on npmjs.com (owner `AK-103U`, repository
-# `cline-upstream-provider`, workflow `publish.yml`) and drop the
-# NODE_AUTH_TOKEN env from the publish step; `id-token: write` stays.
+# There is no build step in this repository: `npm pack` is the whole "build",
+# and the tarball contents come from the `files` allowlist in package.json.
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
+  workflow_dispatch: # rerun a release from an existing tag ref
 
 permissions:
-  contents: write # create the GitHub Release
-  id-token: write # npm provenance
+  contents: read
 
 concurrency:
-  group: npm-publish
+  group: publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create or update the GitHub Release
+      id-token: write # trusted publishing (OIDC) and provenance
     steps:
-      - name: Checkout
+      - name: Check out the tagged commit
         uses: actions/checkout@v4
 
-      - name: Set up Node and npm
+      - name: Set up Node and the npm registry
         uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - name: Verify the tag matches package.json
+      - name: Validate the tag and the registry state
+        id: release
         run: |
           set -euo pipefail
+          name="$(node -p 'require("./package.json").name')"
+          version="$(node -p 'require("./package.json").version')"
           tag_version="${GITHUB_REF_NAME#v}"
-          pkg_version="$(node -p "require('./package.json').version")"
-          echo "tag=$tag_version package=$pkg_version"
-          test "$tag_version" = "$pkg_version"
 
-      - name: Pack
+          if [ "$tag_version" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$name@$version is already on npm; the publish step will be skipped"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Pack the tarball
         run: npm pack
 
       - name: Publish to npm
-        run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: steps.release.outputs.published == 'false'
+        run: npm publish --provenance --access public
 
       - name: Create or update the GitHub Release
         env:
@@ -65,5 +82,24 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" ./*.tgz \
               --title "$GITHUB_REF_NAME" \
-              --generate-notes
+              --generate-notes \
+              --verify-tag
           fi
+
+      - name: Summarize
+        run: |
+          set -euo pipefail
+          {
+            echo "### \`${{ steps.release.outputs.name }}@${{ steps.release.outputs.version }}\`"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| npm | https://www.npmjs.com/package/${{ steps.release.outputs.name }}/v/${{ steps.release.outputs.version }} |"
+            echo "| release | ${{ github.server_url }}/${{ github.repository }}/releases/tag/$GITHUB_REF_NAME |"
+            echo "| tarball | \`$(basename ./*.tgz)\` ($(du -h ./*.tgz | awk '{print $1}')) |"
+            if [ "${{ steps.release.outputs.published }}" = "true" ]; then
+              echo "| npm publish | skipped, version already on npm |"
+            else
+              echo "| npm publish | done |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
