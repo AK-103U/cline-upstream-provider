@@ -10,6 +10,13 @@
  * so this half listens to `llm/stream` first: that waterfall sees the exact
  * `sessionId` of every model call, which makes each observed response attributable
  * to the Session that asked for it.
+ *
+ * It also owns the optional pin: one channel the profile prefers, or insists on, for
+ * Cline calls. The pin is written into the request where it is already serialized —
+ * the same `fetch` wrapper that observes the answer — because pi-ai's routing compat
+ * fields (`openRouterRouting` / `vercelGatewayRouting`) are withheld by the shipped
+ * profile gate, so no profile can declare them and the wire is what is left. With no
+ * pin the wrapper forwards the request untouched, byte for byte.
  */
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +27,15 @@ const CLINE_CHAT = { protocol: 'https:', hostname: 'api.cline.bot', pathname: '/
 const ROUTE_PATH = '/api/cline-upstream-provider';
 const ICON_PATH = '/api/cline-upstream-provider/icon';
 const CHANNELS_PATH = '/api/cline-upstream-provider/channels';
+/** Read or replace the pin: `GET` answers the state, `POST` writes one. */
+const PIN_PATH = '/api/cline-upstream-provider/pin';
+/**
+ * The environment reference the Cline route resolves for its key — the route's own
+ * `apiKeyEnv` in the profile. This plugin only ever *describes* that reference (never
+ * reads the value); a profile that names a different reference reports unconfigured
+ * here, which the control says out loud rather than guessing.
+ */
+const KEY_ENV = 'CLINE_API_KEY';
 /** Brand marks shipped with this bundle. */
 const ICON_DIR = new URL('./icons/', import.meta.url);
 /** Upstream names kept per round; older links collapse into a leading ellipsis. */
@@ -234,14 +250,18 @@ function settle(route, id, entry) {
 }
 
 /**
- * Fold one parsed payload into one Session's chain.
+ * Fold one parsed payload into one Session's chain, then hand the announcement to the
+ * caller's observer — the pin reads the actual landing spot from there.
  * @param payload - parsed SSE data object or JSON body.
  * @param id - owning Cline request id.
  * @param entry - the owning Session's chain record.
+ * @param onRoute - receives the announced provider and its pipeline, when there is one.
  */
-function capture(payload, id, entry) {
+function capture(payload, id, entry, onRoute) {
   const route = routeOf(payload);
-  if (route !== undefined) settle(route, id, entry);
+  if (route === undefined) return;
+  settle(route, id, entry);
+  if (onRoute !== undefined) onRoute(route);
 }
 
 /**
@@ -249,8 +269,9 @@ function capture(payload, id, entry) {
  * @param response - the clone handed to this plugin.
  * @param id - owning Cline request id.
  * @param entry - the owning Session's chain record.
+ * @param onRoute - receives every announced route, in arrival order.
  */
-async function observe(response, id, entry) {
+async function observe(response, id, entry, onRoute) {
   try {
     const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
     if (contentType.includes('text/event-stream') && response.body !== null) {
@@ -269,7 +290,7 @@ async function observe(response, id, entry) {
           const data = text.slice(5).trim();
           if (data === '' || data === '[DONE]') continue;
           try {
-            capture(JSON.parse(data), id, entry);
+            capture(JSON.parse(data), id, entry, onRoute);
           } catch {}
         }
       }
@@ -278,7 +299,7 @@ async function observe(response, id, entry) {
     const text = await response.text();
     if (text === '') return;
     try {
-      capture(JSON.parse(text), id, entry);
+      capture(JSON.parse(text), id, entry, onRoute);
     } catch {}
   } catch {
     /* Observation is best-effort and never surfaces into the model call. */
@@ -325,6 +346,13 @@ export function apply(ctx) {
   /** `fetch` as it was before this plugin wrapped it, so a probe is never observed by us. */
   let native = globalThis.fetch;
   let requestId = 0;
+  /**
+   * The active pin — `{ mode: 'order' | 'only', channel }` — or null. Null is the
+   * default and means the wrapper forwards every request untouched.
+   */
+  let activePin = null;
+  /** The last landing spot a Cline response announced, so the control can check the pin. */
+  let lastRoute = null;
   const entryOf = (sessionId) => {
     let entry = sessions.get(sessionId);
     if (entry === undefined) {
@@ -335,13 +363,80 @@ export function apply(ctx) {
   };
 
   /**
+   * Find the provider route that serves this gateway, read from the composed loader rows.
+   * The match is the baseURL host, never the provider name: a profile may name the route
+   * anything, and the row may be a patch layer over a bundle default. The shape read is
+   * `dsh-llm-pi-ai`'s `providers.<name>.{ baseURL, apiKeyEnv, api, models }`; a row of any
+   * other shape simply does not match, and the caller falls back to traffic it has seen.
+   * @returns `{ provider, baseURL, apiKeyEnv, api, model }`, or undefined.
+   */
+  const detectRoute = () => {
+    const loader = ctx.get('loader');
+    if (loader === undefined) return undefined;
+    for (const entry of loader.entries()) {
+      const providers = entry?.options?.config?.providers;
+      if (providers === null || typeof providers !== 'object') continue;
+      for (const [provider, profile] of Object.entries(providers)) {
+        if (profile === null || typeof profile !== 'object') continue;
+        let host;
+        try {
+          host = new URL(String(profile.baseURL)).hostname;
+        } catch {
+          continue;
+        }
+        if (host !== CLINE_CHAT.hostname) continue;
+        const models = Array.isArray(profile.models) ? profile.models : [];
+        const first = models.find((model) => typeof model?.id === 'string' && model.id !== '');
+        return {
+          provider,
+          baseURL: String(profile.baseURL),
+          apiKeyEnv: typeof profile.apiKeyEnv === 'string' && profile.apiKeyEnv !== '' ? profile.apiKeyEnv : KEY_ENV,
+          api: typeof profile.api === 'string' ? profile.api : 'openai-completions',
+          model: first?.id,
+        };
+      }
+    }
+    return undefined;
+  };
+
+  /**
+   * Resolve one route's key into the header pi-ai itself would send, so a probe can run
+   * before any real call has been observed. The value stays inside this process.
+   * @param route - the detected route, when there is one.
+   * @returns the auth header pair, or undefined when no key resolves.
+   */
+  const authOf = async (route) => {
+    const env = route?.apiKeyEnv ?? KEY_ENV;
+    let value;
+    const credentials = ctx.get('credentials');
+    if (credentials !== undefined) {
+      try {
+        value = (await credentials.resolve(env))?.value;
+      } catch {
+        /* fall through to the launch environment */
+      }
+    }
+    if (value === undefined || value === '') {
+      const fromEnv = process.env[env];
+      value = typeof fromEnv === 'string' && fromEnv !== '' ? fromEnv : undefined;
+    }
+    if (value === undefined) return undefined;
+    return route?.api === 'anthropic-messages' ? { 'x-api-key': value } : { authorization: 'Bearer ' + value };
+  };
+
+  /**
    * Ask the gateway for its channel list by pinning a channel that cannot exist.
    * The request is refused at the routing layer, so no model runs and no token is spent.
+   * The key and the model come from traffic already seen, else from the composed route —
+   * which is what lets a fresh profile list channels before its first Cline call.
    * @returns the probe response, or undefined when there is nothing to probe with.
    */
   const sendProbe = async () => {
-    const { authorization, model } = credentials;
+    const route = detectRoute();
+    const authorization = credentials.authorization ?? (await authOf(route));
+    const model = credentials.model ?? route?.model;
     if (authorization === undefined || model === undefined) return undefined;
+    const headers = typeof authorization === 'string' ? { authorization } : authorization;
     // §5 of docs/pinning.md: an unknown pipeline gets both fields written, since
     // the field a pipeline ignores is dropped rather than rejected.
     const planner = { providerOptions: { gateway: { only: [PROBE_CHANNEL] } } };
@@ -351,7 +446,7 @@ export function apply(ctx) {
         : { ...planner, ...direct };
     return native(CLINE_CHAT.protocol + '//' + CLINE_CHAT.hostname + CLINE_CHAT.pathname, {
       method: 'POST',
-      headers: { authorization, 'content-type': 'application/json', accept: 'application/json' },
+      headers: { ...headers, 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({
         model,
         max_tokens: 1,
@@ -415,11 +510,131 @@ export function apply(ctx) {
     return channels.pending;
   };
 
+  /**
+   * Record the landing spot of one pinned call. Only a call that actually carried the
+   * pin can judge it, and it is judged against the pin it carried — not against whatever
+   * the pin has become by the time a slow answer arrives.
+   * @param route - the announced provider and its pipeline.
+   * @param applied - the pin that request was sent with.
+   */
+  const noteRoute = (route, applied) => {
+    if (applied === null) return;
+    lastRoute = {
+      actual: route.provider,
+      pipeline: route.pipeline,
+      at: Date.now(),
+      pinned: applied.channel,
+      matched: applied.channel === route.provider,
+    };
+  };
+
+  /**
+   * Narrow one wire value into a pin.
+   * @param value - `null` to clear the pin, or `{ mode, channel }`.
+   * @returns the pin, or the reason the value was refused.
+   */
+  const normalizePin = (value) => {
+    if (value === null || value === undefined) return { pin: null };
+    if (typeof value !== 'object' || Array.isArray(value)) return { error: 'pin must be an object or null' };
+    if (value.mode !== 'order' && value.mode !== 'only') return { error: 'mode must be "order" or "only"' };
+    if (typeof value.channel !== 'string' || value.channel.trim() === '') {
+      return { error: 'channel must be a non-empty string' };
+    }
+    return { pin: { mode: value.mode, channel: value.channel.trim() } };
+  };
+
+  /**
+   * Rewrite one serialized Cline body so it carries the active pin.
+   *
+   * The field depends on the pipeline, and an unknown pipeline writes both: §4 of
+   * docs/pinning.md measured that the field a pipeline does not read is dropped
+   * silently rather than rejected, so writing both is the only honest guess. Existing
+   * keys are merged over, never replaced, and nothing else in the body is touched.
+   * @param body - `init.body` of one Cline chat request.
+   * @returns the rewritten body text, or undefined when there is nothing to write.
+   */
+  const withPin = (body) => {
+    if (activePin === null || typeof body !== 'string' || body === '') return undefined;
+    let parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return undefined;
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    const plain = (value) => (value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {});
+    const fields = { [activePin.mode]: [activePin.channel] };
+    const pipeline = pipelineOf();
+    if (pipeline !== 'direct') {
+      const options = plain(parsed.providerOptions);
+      parsed.providerOptions = { ...options, gateway: { ...plain(options.gateway), ...fields } };
+    }
+    if (pipeline !== 'planner') {
+      parsed.provider = { ...plain(parsed.provider), ...fields };
+    }
+    return JSON.stringify(parsed);
+  };
+
+  /**
+   * The pin, the key it depends on, and the last landing spot.
+   * The key is only ever *described*: `describe` reports whether the Cline route's
+   * environment reference resolves, and from which layer, without handing out the value.
+   * @returns the state the control renders.
+   */
+  const pinState = async () => {
+    // The key reference belongs to the route the profile actually composed, not to a
+    // name this plugin assumed: that is what keeps a renamed provider working.
+    const route = detectRoute();
+    const env = route?.apiKeyEnv ?? KEY_ENV;
+    let configured = false;
+    let source;
+    const credentials = ctx.get('credentials');
+    if (credentials === undefined) {
+      // No credential service mounted: the launch environment is the only layer left.
+      const value = process.env[env];
+      configured = typeof value === 'string' && value !== '';
+      source = configured ? 'environment' : undefined;
+    } else {
+      try {
+        const info = await credentials.describe(env);
+        configured = info?.configured === true;
+        source = info?.source;
+      } catch {
+        /* An unusable credential store reads as unconfigured, never as an error. */
+      }
+    }
+    // A reading belongs only to the pin it was taken under: a slow answer that lands
+    // after the pin changed must not be shown as that new pin's verdict.
+    const last = lastRoute !== null && lastRoute.pinned === activePin?.channel ? lastRoute : null;
+    return { pin: activePin, route, key: { env, configured, source }, last };
+  };
+
   ctx.connection.fetch.register({
     path: ICON_PATH,
     methods: ['GET'],
     requestBody: 'buffered',
     fetch: (request) => serveIcon(request),
+  });
+  ctx.connection.fetch.register({
+    path: PIN_PATH,
+    methods: ['GET', 'POST'],
+    requestBody: 'buffered',
+    fetch: async (request) => {
+      if (request.method === 'POST') {
+        let body;
+        try {
+          body = await request.json();
+        } catch {
+          return Response.json({ error: 'body must be JSON' }, { status: 400 });
+        }
+        const next = normalizePin(body?.pin);
+        if (next.error !== undefined) return Response.json({ error: next.error }, { status: 400 });
+        // A new pin invalidates the previous spot: that reading belonged to the old pin.
+        if (next.pin?.channel !== activePin?.channel || next.pin?.mode !== activePin?.mode) lastRoute = null;
+        activePin = next.pin;
+      }
+      return Response.json(await pinState(), { headers: { 'cache-control': 'no-store' } });
+    },
   });
   ctx.connection.fetch.register({
     path: ROUTE_PATH,
@@ -479,8 +694,31 @@ export function apply(ctx) {
         const sessionId = claim(pending, last, model);
         if (sessionId !== undefined) target = { id: ++requestId, entry: entryOf(sessionId) };
       }
-      const response = await original(input, init);
-      if (target !== undefined) void observe(response.clone(), target.id, target.entry);
+      // The pin is written after both halves have serialized the request and before the
+      // socket sees it: with no pin these two lines change nothing at all.
+      let callInput = input;
+      let callInit = init;
+      let applied = null;
+      if (mine && activePin !== null) {
+        const rewritten = init?.body !== undefined
+          ? withPin(init.body)
+          : input instanceof Request ? withPin(await input.clone().text()) : undefined;
+        if (rewritten !== undefined) {
+          applied = activePin;
+          if (init?.body !== undefined) {
+            callInit = { ...init, body: rewritten };
+            const headers = new Headers(callInit.headers ?? undefined);
+            if (headers.has('content-length')) {
+              headers.delete('content-length');
+              callInit.headers = headers;
+            }
+          } else {
+            callInput = new Request(input, { body: rewritten });
+          }
+        }
+      }
+      const response = await original(callInput, callInit);
+      if (target !== undefined) void observe(response.clone(), target.id, target.entry, (route) => noteRoute(route, applied));
       return response;
     };
     globalThis.fetch = wrapped;
@@ -488,5 +726,5 @@ export function apply(ctx) {
       if (globalThis.fetch === wrapped) globalThis.fetch = original;
       native = original;
     };
-  }, 'cline-upstream-provider: Cline response observation');
+  }, 'cline-upstream-provider: Cline response observation + pin');
 }
