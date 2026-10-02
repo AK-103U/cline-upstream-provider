@@ -1,7 +1,9 @@
 name: Publish
 
 # Tag-driven release: pushing `vX.Y.Z` publishes the tagged commit to npm and
-# creates a GitHub Release with the packed tarball attached.
+# creates a GitHub Release with the packed tarball attached. Release notes are
+# composed from the commit subjects since the previous tag, because automatic
+# notes only list merged pull requests and this repository pushes to main.
 #
 # Authentication is npm trusted publishing (OIDC): the job trades its GitHub
 # identity for a short-lived npm credential, so no NPM_TOKEN secret is stored
@@ -35,6 +37,8 @@ jobs:
     steps:
       - name: Check out the tagged commit
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history needed for the release notes
 
       - name: Set up Node and the npm registry
         uses: actions/setup-node@v4
@@ -72,6 +76,27 @@ jobs:
         if: steps.release.outputs.published == 'false'
         run: npm publish --provenance --access public
 
+      - name: Compose release notes from the commits
+        run: |
+          set -euo pipefail
+          current="$GITHUB_REF_NAME"
+          git fetch --tags --force --quiet
+          previous="$(git tag --sort=-v:refname --merged "$current" | grep -vx "$current" | head -n1 || true)"
+          url="${{ github.server_url }}/${{ github.repository }}"
+          {
+            if [ -n "$previous" ]; then
+              git log --no-merges --pretty=format:'- %s (`%h`)' "$previous..$current"
+            else
+              git log --no-merges --pretty=format:'- %s (`%h`)' "$current"
+            fi
+            echo
+            echo
+            if [ -n "$previous" ]; then
+              echo "**Full Changelog**: $url/compare/$previous...$current"
+            fi
+          } > release-notes.md
+          cat release-notes.md
+
       - name: Create or update the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -79,10 +104,11 @@ jobs:
           set -euo pipefail
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" ./*.tgz --clobber
+            gh release edit "$GITHUB_REF_NAME" --notes-file release-notes.md
           else
             gh release create "$GITHUB_REF_NAME" ./*.tgz \
               --title "$GITHUB_REF_NAME" \
-              --generate-notes \
+              --notes-file release-notes.md \
               --verify-tag
           fi
 
