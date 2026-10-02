@@ -1,9 +1,10 @@
 name: Publish
 
 # Tag-driven release: pushing `vX.Y.Z` publishes the tagged commit to npm and
-# creates a GitHub Release with the packed tarball attached. Release notes are
-# composed from the commit subjects since the previous tag, because automatic
-# notes only list merged pull requests and this repository pushes to main.
+# creates a GitHub Release with the packed tarball attached. Release notes come from
+# `.github/scripts/release-notes.mjs` in the project's bilingual layout, preferring the
+# tag's own annotation, then the sections a commit body carries, then the subject's two
+# halves — automatic notes only list merged pull requests and this repository pushes to main.
 #
 # Authentication is npm trusted publishing (OIDC): the job trades its GitHub
 # identity for a short-lived npm credential, so no NPM_TOKEN secret is stored
@@ -79,22 +80,9 @@ jobs:
       - name: Compose release notes from the commits
         run: |
           set -euo pipefail
-          current="$GITHUB_REF_NAME"
           git fetch --tags --force --quiet
-          previous="$(git tag --sort=-v:refname --merged "$current" | grep -vx "$current" | head -n1 || true)"
-          url="${{ github.server_url }}/${{ github.repository }}"
-          {
-            if [ -n "$previous" ]; then
-              git log --no-merges --pretty=format:'- %s (`%h`)' "$previous..$current"
-            else
-              git log --no-merges --pretty=format:'- %s (`%h`)' "$current"
-            fi
-            echo
-            echo
-            if [ -n "$previous" ]; then
-              echo "**Full Changelog**: $url/compare/$previous...$current"
-            fi
-          } > release-notes.md
+          previous="$(git tag --sort=-v:refname --merged "$GITHUB_REF_NAME" | grep -vx "$GITHUB_REF_NAME" | head -n1 || true)"
+          node .github/scripts/release-notes.mjs "$GITHUB_REF_NAME" "${previous:--}" > release-notes.md
           cat release-notes.md
 
       - name: Create or update the GitHub Release
