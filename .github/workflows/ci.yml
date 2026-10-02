@@ -1,0 +1,50 @@
+name: CI
+
+# There is no test suite yet, so this guards what actually breaks a release:
+# the syntax of both halves (pi extension in TypeScript, DSH plugin and client
+# in JavaScript) and the tarball manifest produced by `npm pack`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Syntax check the pi extension
+        run: |
+          set -euo pipefail
+          for file in pi/*.ts extensions/*.ts; do
+            node --no-warnings --experimental-transform-types --check "$file"
+            echo "ok: $file"
+          done
+
+      - name: Syntax check the DSH half
+        run: |
+          set -euo pipefail
+          for file in dsh/*.js; do
+            node --no-warnings --check "$file"
+            echo "ok: $file"
+          done
+
+      - name: Check the package manifest
+        run: npm pack --dry-run
