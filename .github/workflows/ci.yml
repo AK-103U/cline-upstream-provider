@@ -1,8 +1,9 @@
 name: CI
 
-# There is no test suite yet, so this guards what actually breaks a release:
-# the syntax of both halves (pi extension in TypeScript, DSH plugin and client
-# in JavaScript) and the tarball manifest produced by `npm pack`.
+# The suite covers the two halves' pure logic — the host's usage cache, narrowing
+# and failure ladder, and the client's narrowing/level/countdown helpers — while
+# what actually breaks a release (the syntax of both halves, the pi extension in
+# TypeScript, and the tarball manifest produced by `npm pack`) is checked directly.
 
 on:
   push:
@@ -41,10 +42,13 @@ jobs:
       - name: Syntax check the DSH half
         run: |
           set -euo pipefail
-          for file in dsh/*.js; do
+          for file in dsh/*.js dsh/host/*.js; do
             node --no-warnings --check "$file"
             echo "ok: $file"
           done
+
+      - name: Test
+        run: node --test "tools/tests/**/*.test.mjs"
 
       - name: Check the package manifest
         run: npm pack --dry-run
