@@ -141,9 +141,24 @@ function headerOf(headers, name) {
 }
 
 /**
+ * A list of names as the gateway stated it, order untouched.
+ * @param value - any value.
+ * @returns the names, or undefined when the value is not an array of names at all.
+ */
+function namesOf(value) {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((name) => typeof name === 'string' && name !== '');
+}
+
+/**
  * The routed provider announced by one parsed response payload, if any.
+ *
+ * `routing.fallbacksAvailable` is the only place the gateway states an ORDER it computed
+ * itself: the 0-token refusal prints the same members sorted by name, which is a roster
+ * rather than a ranking. The field is present-but-empty on a strict pin, and on a
+ * preferred pin it carries our own channel first, so the caller decides what to do with it.
  * @param payload - one parsed SSE data object or a whole JSON body.
- * @returns the announced provider and the pipeline that announced it, or undefined.
+ * @returns the announced provider, the pipeline that announced it, and the stated order.
  */
 function routeOf(payload) {
   const root = payload !== null && typeof payload === 'object' ? payload : undefined;
@@ -158,8 +173,11 @@ function routeOf(payload) {
       ?? choice?.message?.providerMetadata
       ?? candidate.message?.provider_metadata
       ?? candidate.provider_metadata;
-    const final = metadata?.gateway?.routing?.finalProvider;
-    if (typeof final === 'string' && final !== '') return { provider: final, pipeline: 'planner' };
+    const routing = metadata?.gateway?.routing;
+    const final = routing?.finalProvider;
+    if (typeof final === 'string' && final !== '') {
+      return { provider: final, pipeline: 'planner', order: namesOf(routing?.fallbacksAvailable) };
+    }
     if (typeof candidate.provider === 'string' && candidate.provider !== '') {
       return { provider: candidate.provider, pipeline: 'direct' };
     }
@@ -306,6 +324,11 @@ export function apply(ctx) {
   const credentials = { authorization: undefined, model: undefined };
   /** The probed channel list, its pipeline, when it was taken, and the last attempt. */
   const channels = { at: 0, tried: 0, pipeline: '', list: [], attempt: undefined, pending: undefined };
+  /**
+   * The last channel order a real call announced: `{ at, order, finalProvider, strict }`.
+   * `at === 0` means no call has been observed yet, and the card falls back to the roster.
+   */
+  const observed = { at: 0, order: [], finalProvider: undefined, strict: false };
   /** `fetch` as it was before this plugin wrapped it, so a probe is never observed by us. */
   let native = globalThis.fetch;
   let requestId = 0;
@@ -463,6 +486,7 @@ export function apply(ctx) {
       list: channels.list,
       at: channels.at,
       attempt: channels.attempt,
+      observed: { ...observed, order: [...observed.order] },
     });
     const now = Date.now();
     // A list is reused for the full TTL; a probe that produced nothing is retried
@@ -532,6 +556,26 @@ export function apply(ctx) {
       pinned: applied.channel,
       matched: applied.channel === route.provider,
     };
+  };
+
+  /**
+   * Record the channel order the gateway itself stated, and the shape that produced it.
+   *
+   * Only a real call carries `routing.fallbacksAvailable`. Three cases, three meanings:
+   * no pin — the gateway's own fallback order; a preferred pin (`order`) — the same order
+   * with our channel moved to the front, which is what a preference is supposed to do; a
+   * strict pin (`only`) — an empty array, because a strict pin has no fallbacks at all.
+   * The last one is a real answer, not a missing field, and the card acts on it by hiding
+   * the whole channel block instead of showing a stale list.
+   * @param route - the announced provider, pipeline and stated order.
+   * @param applied - the pin that request was sent with, or null.
+   */
+  const noteOrder = (route, applied) => {
+    if (route.order === undefined) return;
+    observed.at = Date.now();
+    observed.order = route.order;
+    observed.finalProvider = route.provider;
+    observed.strict = applied !== null && applied.mode === 'only';
   };
 
   /**
@@ -743,6 +787,7 @@ export function apply(ctx) {
       if (target !== undefined) {
         void observe(response.clone(), target.id, target.entry, (route) => {
           noteRoute(route, applied);
+          noteOrder(route, applied);
           // Real traffic just spent some of the account's windows: let the next look at
           // the card find a warm snapshot. Throttled inside the source (five minutes).
           usage.noteTraffic();

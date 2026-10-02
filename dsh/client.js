@@ -321,6 +321,8 @@ window.__ModuleLoader__.load({
         // The host keeps the refusing answer of its last probe, so an empty list can say
         // more than "nothing": which shape was tried, and what the gateway replied.
         reason: attempt !== null && attempt.ok !== true && typeof attempt.reason === 'string' ? attempt.reason : '',
+        // And the order a real call announced, which is the only order the gateway computes.
+        observed: observedOf(body),
       };
     }
 
@@ -565,6 +567,47 @@ window.__ModuleLoader__.load({
       if (range === undefined) return plan.canceled ? '已取消，到期后失效' : null;
       return range + (plan.canceled ? ' · 已取消，到期后失效' : '');
     }
+
+    /**
+     * The last channel order a real call announced, if the host has one yet.
+     * @param body - parsed /api/cline-upstream-provider/channels payload.
+     * @returns `{ at, order, finalProvider, strict }`, or null while no call was observed.
+     */
+    function observedOf(body) {
+      const raw = body?.observed !== null && typeof body?.observed === 'object' ? body.observed : null;
+      if (raw === null) return null;
+      const at = Number(raw.at);
+      if (!Number.isFinite(at) || at <= 0) return null;
+      return {
+        at,
+        order: Array.isArray(raw.order) ? raw.order.filter((name) => typeof name === 'string' && name !== '') : [],
+        finalProvider: typeof raw.finalProvider === 'string' && raw.finalProvider !== '' ? raw.finalProvider : undefined,
+        strict: raw.strict === true,
+      };
+    }
+
+    /**
+     * What the card's channel block should show, and in which order.
+     *
+     * The gateway's own order comes from real traffic (`fallbacksAvailable`): the roster a
+     * 0-token probe returns is only a membership list, printed sorted by name. A strict pin
+     * has no fallbacks at all and the gateway answers with an empty list — that is an answer,
+     * not missing data, so the whole block stays hidden rather than showing a stale order or
+     * a roster that can no longer happen.
+     * @param channels - the narrowed channels payload, or null before the first answer.
+     * @returns `{ hidden, names, source }`, where source is `pending`, `strict`, `observed` or `roster`.
+     */
+    function channelOrderOf(channels) {
+      if (channels === null) return { hidden: false, names: [], source: 'pending' };
+      const observed = channels.observed;
+      if (observed !== null && observed.strict === true && observed.order.length === 0) {
+        return { hidden: true, names: [], source: 'strict' };
+      }
+      if (observed !== null && observed.order.length > 0) {
+        return { hidden: false, names: observed.order, source: 'observed' };
+      }
+      return { hidden: false, names: channels.list, source: 'roster' };
+    }
     /* qup:pure-end */
 
     /** Display preferences, shared by the card and the settings block. */
@@ -741,7 +784,10 @@ window.__ModuleLoader__.load({
       const providers = chain === null ? [] : chain.providers;
       const keys = providers.map(keyOf);
       const signature = keys.join(',');
-      const channelSlugs = channels === null ? [] : channels.list;
+      // The channel block follows the order a real call announced (the gateway's own
+      // fallback order); a strict pin's empty answer hides the whole block. See channelOrderOf.
+      const order = channelOrderOf(channels);
+      const channelSlugs = order.names;
       const channelKeys = channelSlugs.map(keyOf);
       const markSignature = [...new Set([...keys, ...channelKeys])].join(',');
 
@@ -891,8 +937,14 @@ window.__ModuleLoader__.load({
           h('span', null, name)));
       });
 
-      /** The card's body: the gateway's channels, or one quiet line saying why not. */
+      /**
+       * The card's body: the gateway's channels in the gateway's own order, or one quiet
+       * line saying why not. A strict pin answers with no fallbacks at all, and then there
+       * is nothing to rank — the block renders nothing rather than a stale or empty list.
+       * @returns the body's nodes.
+       */
       const body = () => {
+        if (order.hidden) return [];
         if (channels === null) {
           return [
             h('div', { className: 'cline-skel cline-skel-wide', key: 's1' }),
@@ -975,7 +1027,8 @@ window.__ModuleLoader__.load({
         onMouseLeave: scheduleClose,
       },
       h('div', { className: 'cline-head', key: 'head' },
-        h('span', { className: 'cline-title' }, '渠道商排行'),
+        // The block's own title goes with the block: a strict pin has nothing to rank.
+        order.hidden ? null : h('span', { className: 'cline-title' }, '渠道商排行'),
         h('span', { className: 'cline-route' }, route)),
       quotaNode(),
       body());
