@@ -18,6 +18,8 @@
  * Section order and labels come from SECTIONS; a heading a commit invents that matches
  * none of them lands in the fallback section rather than disappearing. `chore(release)`
  * is skipped: it is the release commit itself, not a change the release ships.
+ *
+ * Set RELEASE_NOTES_DEBUG=1 to print the range and the commits it read on stderr.
  */
 import { execFileSync } from 'node:child_process';
 
@@ -60,10 +62,19 @@ if (current === undefined) {
 /** Run git and return its stdout. */
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' });
 
-/** The tag's annotation body, when it carries more than a title line. */
+/**
+ * The tag's annotation body, when the tag carries one.
+ *
+ * The tag type matters: `%(contents)` of a *lightweight* tag is the tagged commit's own
+ * message, so reading it there would print one commit's body as the whole release. Only
+ * an annotated tag has notes of its own, and only those are worth passing through.
+ * @param tag - the tag name.
+ * @returns the annotation body, or undefined for a lightweight tag or a title-only one.
+ */
 function tagNotes(tag) {
   let contents = '';
   try {
+    if (git('cat-file', '-t', tag).trim() !== 'tag') return undefined;
     contents = git('tag', '-l', '--format=%(contents)', tag);
   } catch {
     return undefined;
@@ -105,8 +116,15 @@ function parseBody(body) {
   let language = 'zh';
   let section = FALLBACK;
   let structured = false;
+  let fenced = false;
   for (const raw of body.replace(/\r/g, '').split('\n')) {
     const line = raw.trim();
+    // A fenced block is quoted material, never this project's own headings and bullets.
+    if (/^(```|~~~)/u.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
     if (line === '' || line.startsWith('[中文]')) continue;
     if (/^(-{3,}|\*{3,}|_{3,})$/u.test(line) || /^signed-off-by:/iu.test(line)) continue;
     const html = /^<h[1-6][^>]*>(.*)<\/h[1-6]>$/u.exec(line);
@@ -147,6 +165,9 @@ const commits = git('log', '--no-merges', `--pretty=format:%s${SEPARATOR}%b${REC
 
 /** section -> { zh: string[], en: string[] }, merged across commits. */
 const groups = new Map();
+if (process.env.RELEASE_NOTES_DEBUG !== undefined) {
+  console.error('[debug] range', range, '| commits', commits.length, '|', commits.map((commit) => commit.subject));
+}
 const add = (section, language, items) => {
   const group = groups.get(section.zh) ?? { section, zh: [], en: [] };
   for (const item of items) if (!group[language].includes(item)) group[language].push(item);
@@ -170,21 +191,31 @@ for (const commit of commits) {
 const order = [...new Set([...SECTIONS.map((entry) => entry.zh), FALLBACK.zh])];
 const present = order.map((label) => groups.get(label)).filter((group) => group !== undefined);
 
-const lines = [`[中文](#cn-${current}) | [English](#en-${current})`, ''];
+const lines = [];
 if (present.length === 0) {
   lines.push('本次发布没有可列举的提交。', '', 'No commits to list for this release.', '');
 }
+/** language -> rendered block, so the switcher only offers a language that exists. */
+const blocks = new Map();
 for (const [language, suffix] of [['zh', 'cn'], ['en', 'en']]) {
+  const block = [];
   let first = true;
   for (const group of present) {
     const items = group[language];
     if (items.length === 0) continue;
     const heading = group.section[language];
-    lines.push(first ? `<h3 id="${suffix}-${current}">${heading}</h3>` : `### ${heading}`, '');
+    block.push(first ? `<h3 id="${suffix}-${current}">${heading}</h3>` : `### ${heading}`, '');
     first = false;
-    for (const item of items) lines.push(`- ${item}`);
-    lines.push('');
+    for (const item of items) block.push(`- ${item}`);
+    block.push('');
   }
+  if (block.length > 0) blocks.set(language, block);
+}
+// A switcher needs both languages to have something to switch to.
+if (blocks.size === 2) lines.push(`[中文](#cn-${current}) | [English](#en-${current})`, '');
+for (const language of ['zh', 'en']) {
+  const block = blocks.get(language);
+  if (block !== undefined) lines.push(...block);
 }
 const server = process.env.GITHUB_SERVER_URL;
 const repository = process.env.GITHUB_REPOSITORY;
