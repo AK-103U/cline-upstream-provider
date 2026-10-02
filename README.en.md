@@ -31,6 +31,10 @@ dsh plugin --profile web add @ak-103u/cline-upstream-provider
 
 Once installed, the routing chain shows under the composer (for example `deepseek → alibaba`), with vendor marks and brand colours, scoped per session, following the light/dark theme, and taking no space while there is no routing data.
 
+The hover card also carries your **Cline Pass quota**: progress bars, percentages and reset countdowns for the three rolling windows (5h / 7d / monthly), plus a plan line; Settings → Plugins → this plugin's page holds the full reading (account, the three windows, plan and period, freshness, diagnostics). The host half reads it with the same key this route uses, **cached for 60 seconds and keeping the last good numbers when a refresh fails**; the browser never sees the key, and an unconfigured Cline simply shows nothing instead of an error. Style lab: [docs/quota-preview.html](docs/quota-preview.html); design notes (Chinese): [docs/dsh-quota.md](docs/dsh-quota.md).
+
+> The endpoints report percentages only — there is no balance or remaining amount — so no "money left" figure is shown.
+
 ### pi
 
 Install it from npm:

@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>渠道钉住 · 插件详情页控件预览</title>
+<!--
+  ============================================================================
+  这是什么
+  ============================================================================
+  「渠道钉住」在 设置 → 插件 → Cline 上游供应商 详情页里的那块控件的效果稿。
+  先把交互与视觉定下来，再往 dsh/client.js / dsh/index.js 里接。
+
+  真实的部分
+    · 令牌名与值：逐条抄自 DSH 主题包的真实别名层（亮/暗两套），来源：
+      …\@deepseek-ai\dsh-client-ui-theme\lib\client.js（design-platform.css 的
+      body{…} 与 body[data-ds-dark-theme]{…}）→ 换主题效果 = 真机换主题效果。
+    · 图标与品牌色：由 tools/sync-preview.mjs 从 dsh/icons 与 dsh/client.js 的 COLORS 生成，
+      与悬浮卡片同源（下面三个 *BEGIN*/*END* 槽由该脚本重写，不要手改）。
+    · 插件信息：标题/描述取 dsh/locale/zh.json，版本取 package.json，行名取 dsh/cordis.patch.yml。
+    · 渠道清单：真实网关顺序（21 个）。
+
+  重构的部分（接入时以官方实现为准）
+    · 开关几何：官方只给了 --dsw-alias-switch-thumb 令牌，没找到开关样式表，这里按令牌配色重建。
+    · 面板外框、插件页自带的「启用/卸载」：只是背景板，不可点。
+
+  两个外观属性的说明
+    · body[data-ds-dark-theme] 是 DSH 真机用的（主题 presenter 只设这一个）。
+    · html[data-theme="dark"] 只是为了配合 tools/sync-preview.mjs 生成的品牌色暗色规则，
+      真机接入时把那些规则的选择器换成 body[data-ds-dark-theme] 即可（卡片里就是这么写的）。
+
+  接入时删除（只属于这份预览，真机上不存在）
+    · 顶部开发工具条：.devbar[data-dev]
+    · 底部接入映射表：details.map[data-dev]
+    · 「灰色开关与卸载…」这行注解：.shell-note[data-dev]
+    · 页面级背景板样式：.devbar/.panel/.panel-title/.bundle-*/.shell-*/.rows* 与 details.map
+    · 品牌色 <style> 槽与 <svg class="sprite">：真机上图标走
+      /api/cline-upstream-provider/icon?name= 的 HTTP 端点，品牌色来自插件自己 STYLE 里的
+      .cline-<key> + body[data-ds-dark-theme] 规则（sync 脚本生成的那份只是预览副本）。
+  真正要搬进插件的只有：.cp-* 样式 + 控件结构与状态机 + 文案。
+  ============================================================================
+-->
+<style>
+/* ===== 令牌层：与 DSH 同名同值（此处只保留本页用到的） ===== */
+body{
+  --dsw-font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --dsw-radius-xs:4px; --dsw-radius-sm:8px; --dsw-radius-md:12px; --dsw-radius-lg:16px;
+
+  --dsw-alias-bg-base:#fff;
+  --dsw-alias-bg-layer-1:#fff;
+  --dsw-alias-bg-layer-2:#fff;
+  --dsw-alias-bg-layer-3:#fff;
+  --dsw-alias-bg-module-platform:#f5f6f7;
+  --dsw-alias-bg-overlay:#e9ecf2;
+  --dsw-alias-bg-skeleton:#0000000a;
+  --dsw-specific-input-major:#fff;
+  --dsw-specific-menu:#f8f9faf0;
+
+  --dsw-alias-interactive-bg-hover:#2631480f;
+  --dsw-alias-interactive-bg-active:#2631481a;
+
+  --dsw-alias-label-primary:#0f1115;
+  --dsw-alias-label-secondary:#61666b;
+  --dsw-alias-label-tertiary:#81858c;
+  --dsw-alias-label-caption:#adb2b8;
+
+  --dsw-alias-border-l1:#0000000a;
+  --dsw-alias-border-l2:#0000001a;
+  --dsw-alias-border-l3:#0000001f;
+  --dsw-alias-border-l4:#00000029;
+
+  --dsw-alias-brand-primary:#0f1115;
+  --dsw-alias-button-primary-fill:#0f1115;
+  --dsw-alias-switch-thumb:#fff;
+  --dsw-alias-state-idle-primary:#d4d4d4;
+  --dsw-alias-state-success-primary:#22c55e;
+  --dsw-alias-state-error-primary:#ec1313;
+  --dsw-alias-state-warn-primary:#f59e0b;
+  --dsw-alias-link:#4176e6;
+
+  --dsw-specific-sidebar-fill:#f9fafb;
+  --dsw-elevation-panel:0 0 0 .5px #00000029, 0 3px 8px 0 #00000008, 0 0 16px 0 #00000005;
+}
+body[data-ds-dark-theme]{
+  --dsw-alias-bg-base:#151517;
+  --dsw-alias-bg-layer-1:#232324;
+  --dsw-alias-bg-layer-2:#2c2c2e;
+  --dsw-alias-bg-layer-3:#353638;
+  --dsw-alias-bg-module-platform:#353638;
+  --dsw-alias-bg-overlay:#61666b;
+  --dsw-alias-bg-skeleton:#ffffff14;
+  --dsw-specific-input-major:#2c2c2e;
+  --dsw-specific-menu:#303136f0;
+
+  --dsw-alias-interactive-bg-hover:#ffffff14;
+  --dsw-alias-interactive-bg-active:#ffffff24;
+
+  --dsw-alias-label-primary:#f9fafb;
+  --dsw-alias-label-secondary:#cfd3d6;
+  --dsw-alias-label-tertiary:#adb2b8;
+  --dsw-alias-label-caption:#81858c;
+
+  --dsw-alias-border-l1:#ffffff0f;
+  --dsw-alias-border-l2:#ffffff1f;
+  --dsw-alias-border-l3:#ffffff29;
+  --dsw-alias-border-l4:#fff3;
+
+  --dsw-alias-brand-primary:#f9fafb;
+  --dsw-alias-button-primary-fill:#f9fafb;
+  --dsw-alias-switch-thumb:#adb2b8;
+  --dsw-alias-state-idle-primary:#545557;
+  --dsw-alias-state-error-primary:#f25a5a;
+  --dsw-alias-link:#7aaaff;
+
+  --dsw-specific-sidebar-fill:#1b1b1c;
+  --dsw-elevation-panel:0 0 0 .5px #fff3, 0 3px 8px 0 #00000008, 0 0 16px 0 #00000005;
+}
+
+/* ===== 品牌色（由 tools/sync-preview.mjs 生成，勿手改） ===== */
+/*BRAND_COLORS_BEGIN*/
+.cline-deepseek{color:#4967F7}
+.cline-alibaba{color:#BA5208}
+.cline-baseten{color:#0E823E}
+.cline-togetherai{color:#D34409}
+.cline-modal{color:#238411}
+.cline-xiaomi{color:#C45408}
+.cline-openrouter{color:#607905}
+.cline-deepinfra{color:#5162F8}
+.cline-fireworks{color:#793FF7}
+.cline-novita{color:#16864E}
+.cline-morph{color:#5C7F19}
+.cline-runware{color:#1C8906}
+.cline-particle{color:#D212BB}
+.cline-boundless{color:#377E84}
+.cline-zai{color:#2E5BFF}
+.cline-gmicloud{color:#D93A1F}
+.cline-wafer{color:#6E32E8}
+.cline-parasail{color:#1B4B8F}
+.cline-relace{color:#B4462A}
+.cline-inferencenet{color:#0E7C8C}
+.cline-openai{color:#000000}
+html[data-theme="dark"] .cline-deepseek{color:#5D77F8}
+html[data-theme="dark"] .cline-alibaba{color:#F56C0A}
+html[data-theme="dark"] .cline-baseten{color:#19E76E}
+html[data-theme="dark"] .cline-togetherai{color:#F55310}
+html[data-theme="dark"] .cline-modal{color:#8FEE7E}
+html[data-theme="dark"] .cline-xiaomi{color:#F56F14}
+html[data-theme="dark"] .cline-openrouter{color:#BDEE0A}
+html[data-theme="dark"] .cline-deepinfra{color:#828EFA}
+html[data-theme="dark"] .cline-fireworks{color:#9466F9}
+html[data-theme="dark"] .cline-novita{color:#23D57C}
+html[data-theme="dark"] .cline-morph{color:#8DC327}
+html[data-theme="dark"] .cline-runware{color:#ADFB9D}
+html[data-theme="dark"] .cline-particle{color:#F159DF}
+html[data-theme="dark"] .cline-boundless{color:#63B7BE}
+html[data-theme="dark"] .cline-zai{color:#7C9BFF}
+html[data-theme="dark"] .cline-gmicloud{color:#FF7A5C}
+html[data-theme="dark"] .cline-wafer{color:#B48CFF}
+html[data-theme="dark"] .cline-parasail{color:#6FA8FF}
+html[data-theme="dark"] .cline-relace{color:#F08355}
+html[data-theme="dark"] .cline-inferencenet{color:#3FC5D8}
+html[data-theme="dark"] .cline-openai{color:#FFFFFF}
+/*BRAND_COLORS_END*/
+
+/* ===== 预览页背景板（不是设计对象） ===== */
+*{box-sizing:border-box}
+body{
+  margin:0;padding:22px 22px 60px;background:var(--dsw-specific-sidebar-fill);color:var(--dsw-alias-label-primary);
+  font:14px/22px var(--dsw-font-family);
+}
+.devbar{
+  border:1px dashed var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);
+  padding:10px 12px;margin:0 auto 18px;max-width:820px;display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;
+  color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;
+}
+.devbar b{color:var(--dsw-alias-label-tertiary);font-weight:400;margin-right:2px}
+.devbar .seg{display:inline-flex;gap:2px;background:var(--dsw-alias-bg-module-platform);border-radius:var(--dsw-radius-sm);padding:2px}
+.devbar button{border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;padding:2px 8px;border-radius:6px;cursor:pointer}
+.devbar button[aria-pressed="true"]{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:0 0 0 .5px var(--dsw-alias-border-l2)}
+
+.panel{max-width:820px;margin:0 auto;background:var(--dsw-alias-bg-layer-1);border-radius:var(--dsw-radius-lg);box-shadow:var(--dsw-elevation-panel);padding:4px 22px 22px}
+.panel-title{font-size:14px;line-height:22px;color:var(--dsw-alias-label-tertiary);padding:16px 0 6px}
+.bundle-head{display:flex;align-items:flex-start;gap:12px;padding:6px 0 2px}
+.bundle-name{font-size:16px;line-height:24px;color:var(--dsw-alias-label-primary)}
+.bundle-ver{font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption)}
+.bundle-desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);margin:4px 0 0}
+.shell-controls{margin-left:auto;display:flex;align-items:center;gap:10px;opacity:.75}
+.shell-switch{width:36px;height:20px;border-radius:999px;background:var(--dsw-alias-button-primary-fill);position:relative}
+.shell-switch::after{content:"";position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:999px;background:var(--dsw-alias-switch-thumb)}
+.shell-btn{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);padding:3px 10px}
+.shell-note{font-size:11px;line-height:16px;color:var(--dsw-alias-label-caption);margin:2px 0 0}
+
+/* ==========================================================================
+   ↓↓↓ 以下 .cp-* 就是将来要搬进 dsh/client.js 的 STYLE 的那块 ↓↓↓
+   ========================================================================== */
+.cp-block{border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.cp-row{padding:14px 0;border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.cp-row:last-child{border-bottom:0}
+.cp-head{display:flex;align-items:center;gap:12px}
+.cp-title{font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}
+.cp-desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);margin:2px 0 0}
+.cp-body{margin-top:10px}
+
+/* 开关 */
+.cp-switch{
+  margin-left:auto;flex:none;width:36px;height:20px;border:0;padding:0;border-radius:999px;cursor:pointer;
+  background:var(--dsw-alias-state-idle-primary);position:relative;transition:background .15s ease;
+}
+.cp-switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:999px;background:var(--dsw-alias-switch-thumb);transition:transform .15s ease}
+.cp-switch[aria-checked="true"]{background:var(--dsw-alias-button-primary-fill)}
+.cp-switch[aria-checked="true"]::after{transform:translateX(16px)}
+.cp-switch[aria-disabled="true"]{opacity:.5;cursor:default}
+.cp-switch:focus-visible{outline:2px solid var(--dsw-alias-link);outline-offset:2px}
+
+/* 标签列 + 内容列 */
+.cp-field{display:grid;grid-template-columns:76px 1fr;gap:10px;align-items:start;padding:6px 0}
+.cp-label{font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary);padding-top:3px}
+
+/* 分段控件 */
+.cp-seg{display:inline-flex;gap:2px;background:var(--dsw-alias-bg-module-platform);border-radius:var(--dsw-radius-sm);padding:3px}
+.cp-seg button{border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;padding:3px 10px;border-radius:6px;cursor:pointer}
+.cp-seg button[aria-pressed="true"]{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:0 0 0 .5px var(--dsw-alias-border-l2)}
+.cp-hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);margin:6px 0 0}
+.cp-warn{font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary);margin:6px 0 0}
+
+/* 搜索 + 渠道选择 */
+.cp-tools{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.cp-input{
+  flex:1;min-width:0;height:28px;padding:0 8px;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary);
+  background:var(--dsw-specific-input-major);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);outline:none;
+}
+.cp-input::placeholder{color:var(--dsw-alias-label-caption)}
+.cp-input:focus{border-color:var(--dsw-alias-border-l3)}
+.cp-ghost{flex:none;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;padding:3px 6px;border-radius:6px;cursor:pointer}
+.cp-ghost:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.cp-scroll{max-height:196px;overflow:auto;overscroll-behavior:contain;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm);padding:4px}
+.cp-list{margin:0;padding:0;list-style:none}
+.cp-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px}
+.cp-item{
+  display:flex;align-items:center;gap:5px;padding:4px 6px;border-radius:6px;cursor:pointer;
+  font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);min-width:0;
+}
+.cp-item:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.cp-item[data-selected="true"]{background:var(--dsw-alias-interactive-bg-active)}
+/* 图标与名字一起取品牌色：行上挂 cline-<slug>，名字 color:inherit（与悬浮卡片同一套做法） */
+.cp-item .cp-name{color:inherit}
+.cp-mark,.cp-mark>svg,.cp-mark>img{display:block;width:14px;height:14px;flex:none}
+.cp-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cp-cnt{margin-left:auto;font-size:11px;color:var(--dsw-alias-label-caption)}
+.cp-skel{display:grid;gap:6px;padding:4px 2px}
+.cp-skel i{display:block;height:12px;border-radius:6px;background:var(--dsw-alias-bg-skeleton)}
+.cp-manual{display:flex;gap:6px;margin-top:8px}
+.cp-note{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);margin:0 0 4px}
+.cp-note .cp-keymark{color:var(--dsw-alias-label-primary);font-family:ui-monospace,Consolas,monospace;font-size:11px}
+
+/* 当前 + 自校验 */
+.cp-current{display:flex;align-items:center;gap:8px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}
+.cp-live{display:flex;align-items:baseline;gap:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);flex-wrap:wrap}
+.cp-ok{color:var(--dsw-alias-state-success-primary)}
+.cp-bad{color:var(--dsw-alias-state-error-primary)}
+.cp-warnmark{color:var(--dsw-alias-state-warn-primary)}
+.cp-tag{font-size:11px;line-height:16px;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary)}
+.cp-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;padding:3px 10px;border-radius:var(--dsw-radius-sm);cursor:pointer}
+.cp-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.cp-off{font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption)}
+[hidden]{display:none !important}
+
+/* 背景板里的行列表 */
+.rows{margin-top:16px;border-top:.5px solid var(--dsw-alias-border-l2);padding-top:12px}
+.rows-title{font-size:12px;line-height:18px;color:var(--dsw-alias-label-caption);margin-bottom:8px}
+.rows-row{display:flex;align-items:center;gap:10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);padding:6px 0}
+.rows-row code{font-size:11px;color:var(--dsw-alias-label-caption)}
+details.map{margin:26px auto 0;max-width:820px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}
+details.map summary{cursor:pointer;color:var(--dsw-alias-label-secondary)}
+details.map table{border-collapse:collapse;margin-top:10px;width:100%}
+details.map th,details.map td{border:1px solid var(--dsw-alias-border-l2);padding:5px 8px;text-align:left;vertical-align:top}
+details.map th{color:var(--dsw-alias-label-caption);font-weight:400}
+code{font-family:ui-monospace,Consolas,monospace}
+/* 不能 display:none —— 那样 <use> 引用不到 symbol */
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+</style>
+</head>
+<body>
+
+<!-- ===== 开发工具条（接入时删除） ===== -->
+<div class="devbar" data-dev="1">
+  <span><b>主题</b>
+    <span class="seg">
+      <button type="button" data-theme="light" aria-pressed="true">浅色</button>
+      <button type="button" data-theme="dark" aria-pressed="false">深色</button>
+    </span>
+  </span>
+  <span><b>场景</b><span class="seg" id="scenes"></span></span>
+  <span><b>设计选项</b>
+    <span class="seg">
+      <button type="button" data-opt="layout" data-value="grid" aria-pressed="true">网格</button>
+      <button type="button" data-opt="layout" data-value="list" aria-pressed="false">列表</button>
+    </span>
+    <span class="seg">
+      <button type="button" data-opt="icons" data-value="on" aria-pressed="true">图标 开</button>
+      <button type="button" data-opt="icons" data-value="off" aria-pressed="false">图标 关</button>
+    </span>
+    <span class="seg">
+      <button type="button" data-opt="search" data-value="on" aria-pressed="true">搜索 开</button>
+      <button type="button" data-opt="search" data-value="off" aria-pressed="false">搜索 关</button>
+    </span>
+  </span>
+</div>
+
+<!-- ===== 背景板：插件详情页 ===== -->
+<main class="panel">
+  <div class="panel-title">插件</div>
+
+  <div class="bundle-head">
+    <div>
+      <div class="bundle-name">Cline 上游供应商 <span class="bundle-ver">0.1.3</span></div>
+      <div class="bundle-desc">在输入框下方显示 Cline 网关每次实际路由到的上游供应商（按会话隔离）。</div>
+    </div>
+    <span class="shell-controls" title="页面自带，非本控件">
+      <span class="shell-btn">卸载</span>
+      <span class="shell-switch"></span>
+    </span>
+  </div>
+  <p class="shell-note" data-dev="1">（灰色开关与「卸载」是插件页自带的，这里只作背景，不可点。）</p>
+
+  <!-- ★ 我们的控件 -->
+  <section class="cp-block" id="cp">
+
+    <div class="cp-row">
+      <div class="cp-head">
+        <div>
+          <div class="cp-title">渠道钉住</div>
+          <div class="cp-desc" id="cp-desc">关闭时请求原样发出，不做任何改写。</div>
+        </div>
+        <button type="button" class="cp-switch" id="cp-switch" role="switch" aria-checked="false" aria-label="渠道钉住"></button>
+      </div>
+    </div>
+
+    <div class="cp-row" id="cp-on" hidden>
+
+      <div class="cp-field" id="cp-mode-field">
+        <div class="cp-label">钉住方式</div>
+        <div>
+          <div class="cp-seg" id="cp-mode">
+            <button type="button" data-mode="order" aria-pressed="true">优先使用，失败回退</button>
+            <button type="button" data-mode="only" aria-pressed="false">仅使用它</button>
+          </div>
+          <p class="cp-hint" id="cp-mode-hint">请求优先落到所钉渠道；它不可用时网关仍可回退到其他渠道。</p>
+          <p class="cp-warn" id="cp-mode-warn" hidden>严格模式没有回退：所钉渠道不可用时，这次调用会直接失败。</p>
+        </div>
+      </div>
+
+      <div class="cp-field" id="cp-pick-field" hidden>
+        <div class="cp-label">选择渠道</div>
+        <div>
+          <div class="cp-tools" id="cp-tools">
+            <input class="cp-input" id="cp-search" type="search" placeholder="搜索渠道名…" autocomplete="off" />
+            <button type="button" class="cp-ghost" id="cp-refresh">刷新清单</button>
+          </div>
+          <div class="cp-scroll" id="cp-scroll"><ul class="cp-list" id="cp-list"></ul></div>
+          <p class="cp-hint" id="cp-count"></p>
+        </div>
+      </div>
+
+      <div class="cp-field" id="cp-loading" hidden>
+        <div class="cp-label">选择渠道</div>
+        <div>
+          <div class="cp-skel"><i style="width:38%"></i><i style="width:72%"></i><i style="width:56%"></i><i style="width:64%"></i></div>
+          <p class="cp-hint">正在向网关查询渠道清单…（复用现有的探测，零 token）</p>
+        </div>
+      </div>
+
+      <div class="cp-field" id="cp-empty" hidden>
+        <div class="cp-label">选择渠道</div>
+        <div>
+          <p class="cp-hint"><span class="cp-warnmark">⚠</span> 还没有渠道清单（探测失败，或本 profile 尚未出现 Cline 请求）。</p>
+          <div class="cp-manual">
+            <input class="cp-input" id="cp-manual" type="text" placeholder="手动填写渠道名，如 novita" autocomplete="off" />
+            <button type="button" class="cp-btn" id="cp-manual-use">使用</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 未配置密钥：不能列渠道，但仍可手填钉住 -->
+      <div class="cp-field" id="cp-nokey" hidden>
+        <div class="cp-label">选择渠道</div>
+        <div>
+          <p class="cp-note"><span class="cp-warnmark">⚠</span> 这个 profile 还没有 cline 的密钥，暂时无法向网关查询渠道清单。</p>
+          <p class="cp-hint">在 <b style="font-weight:400;color:var(--dsw-alias-label-secondary)">设置 → 模型 → cline</b> 里填入密钥，或导出环境变量 <span class="cp-keymark">CLINE_API_KEY</span>；填好后回到这里点「重新检查」。</p>
+          <div class="cp-manual">
+            <input class="cp-input" id="cp-manual2" type="text" placeholder="也可以先手动填渠道名，如 novita" autocomplete="off" />
+            <button type="button" class="cp-btn" id="cp-manual-use2">使用</button>
+            <button type="button" class="cp-btn" id="cp-recheck">重新检查</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="cp-field" id="cp-current-field" hidden>
+        <div class="cp-label">当前</div>
+        <div class="cp-current">
+          <span class="cp-mark" id="cp-current-mark"></span>
+          <span id="cp-current-name">—</span>
+          <span class="cp-tag" id="cp-current-mode">优先</span>
+          <span style="margin-left:auto;display:flex;gap:6px">
+            <button type="button" class="cp-btn" id="cp-change">更换</button>
+            <button type="button" class="cp-btn" id="cp-clear">取消钉住</button>
+          </span>
+        </div>
+      </div>
+
+      <div class="cp-field" id="cp-live-field" hidden>
+        <div class="cp-label">实际落点</div>
+        <div class="cp-live" id="cp-live"></div>
+      </div>
+
+      <p class="cp-off" id="cp-half" hidden>已开启，但还没选渠道 —— 请求仍原样发出。</p>
+    </div>
+  </section>
+
+  <div class="rows">
+    <div class="rows-title">这个插件声明的行</div>
+    <div class="rows-row">
+      <span>cline-upstream-provider</span>
+      <code>@ak-103u/cline-upstream-provider</code>
+      <span class="cp-tag" style="margin-left:auto">已启用</span>
+    </div>
+  </div>
+</main>
+
+<details class="map" data-dev="1">
+  <summary>接入映射（这块控件接到哪些真实数据/接口）</summary>
+  <table>
+    <tr><th>界面元素</th><th>接入来源</th></tr>
+    <tr><td>渠道清单</td><td><code>GET /api/cline-upstream-provider/channels</code>（现有 <code>__probe__</code> 探测，host 按 TTL 缓存）</td></tr>
+    <tr><td>密钥是否配置</td><td><code>ctx.credentials.describe('CLINE_API_KEY')</code> → <code>{ configured, source, writable }</code>（不暴露值）</td></tr>
+    <tr><td>开关 / 方式 / 渠道</td><td>新增 <code>POST /api/cline-upstream-provider/pin</code>，状态存 host 内存（<b>每个 profile 各一份，web 与 desktop 不共享</b>）</td></tr>
+    <tr><td>「实际落点」</td><td>响应里的 <code>finalProvider</code> / <code>provider</code>（现有观察逻辑，零新增成本）</td></tr>
+    <tr><td>改写点</td><td>host 的 fetch wrapper：<code>pin === null</code> 直接放行；否则按管线写 <code>providerOptions.gateway.order|only</code> 或 <code>provider.order|only</code></td></tr>
+    <tr><td>文案</td><td>建议命名空间 <code>cline-upstream-provider.pin.*</code>，走 <code>ctx.locale.register</code></td></tr>
+  </table>
+</details>
+
+<!-- ===== 品牌图标 sprite（由 tools/sync-preview.mjs 生成，勿手改） ===== -->
+<svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><symbol id="mark-alibaba" viewBox="0 0 40 40">
+<path d="M37.9998 23.021C33.7998 25.2889 29.5698 27.3649 24.8614 28.3069C23.8114 28.5154 22.6474 28.5154 21.5809 28.3714C20.5639 28.2439 20.0554 27.3484 20.4169 26.4064C20.7619 25.5289 21.2209 24.635 21.8119 23.9C23.0899 22.3025 24.5329 20.849 25.8289 19.268C26.6203 18.2991 27.3335 17.2689 27.9618 16.187C28.4208 15.4205 28.2078 14.4935 27.4038 14.111C26.0584 13.4556 24.6154 12.9936 23.1889 12.4986C23.0239 12.4341 22.7779 12.6096 22.4509 12.7221C22.8604 13.0881 23.1559 13.3596 23.5654 13.727C19.3339 14.447 15.3305 15.467 11.4455 16.874C11.4275 16.9535 11.396 17.0165 11.411 17.0495C11.9855 17.927 11.723 18.5975 10.886 19.1405C10.5611 19.3531 10.2732 19.6176 10.034 19.9235C12.593 20.6735 14.873 20.243 17.0539 18.821C16.9234 18.6305 16.7914 18.455 16.6609 18.263C17.4799 18.407 17.9719 18.854 18.0379 19.556C18.0544 19.7165 17.9569 19.8755 17.9074 20.036C17.7919 19.907 17.6449 19.781 17.5474 19.6355C17.4799 19.5395 17.4634 19.4285 17.4154 19.268C14.8235 20.993 12.035 21.425 8.96751 20.531C8.96751 21.137 8.93451 21.6485 8.98401 22.1435C9.01701 22.574 8.83701 22.766 8.44401 22.9895C7.55752 23.5325 6.63803 24.092 5.90003 24.8105C5.01504 25.6879 5.34354 26.7589 6.54053 27.2059C7.90102 27.7159 9.329 27.7309 10.7555 27.5569C12.4445 27.3484 14.1005 27.0769 15.9394 26.8219C13.79 27.8269 11.6735 28.5319 9.4445 28.8169C7.88452 29.0269 6.32753 29.1379 4.78554 28.6909C2.57156 28.0684 1.58607 26.4394 2.16057 24.251C2.70206 22.2065 4.01455 20.5775 5.42454 19.076C10.133 14.078 16.0864 11.5401 22.9744 11.0286C24.5824 10.9176 26.2069 11.1246 27.7143 11.7951C29.8308 12.7536 30.7173 14.78 29.6838 16.826C29.0118 18.1835 28.0758 19.4285 27.1413 20.6585C26.2234 21.872 25.1899 22.9895 24.2224 24.155C23.9434 24.506 23.6809 24.875 23.4679 25.2724C23.0569 26.0224 23.3359 26.5174 24.2059 26.4394C26.0254 26.2624 27.8808 26.1199 29.6358 25.6729C32.2098 25.0174 34.7193 24.092 37.2618 23.2775C37.5243 23.213 37.7703 23.117 37.9998 23.0225V23.021Z" fill="currentColor"/>
+</symbol><symbol id="mark-baseten" viewBox="0 0 16 16" fill="none">
+<rect width="16" height="16" fill="#19E76E"/>
+<path d="M3.15656 4.39974H10.4997V6.79949H5.65623C5.56992 6.79949 5.49967 6.86693 5.49967 6.94979V9.04957C5.49967 9.13243 5.56992 9.19987 5.65623 9.19987H10.4997V11.5996H8.15589C8.06958 11.5996 7.99933 11.6671 7.99933 11.7499V13.8497C7.99933 13.9326 8.06958 14 8.15589 14H10.3431C10.4294 14 10.4997 13.9326 10.4997 13.8497V11.5996H12.8434C12.9297 11.5996 13 11.5322 13 11.4493V9.34953C13 9.26667 12.9297 9.19923 12.8434 9.19923H10.4997V6.79949H12.8434C12.9297 6.79949 13 6.73204 13 6.64918V4.54941C13 4.46655 12.9297 4.3991 12.8434 4.3991H10.4997V2.15031C10.4997 2.06744 10.4294 2 10.3431 2H3.15656C3.07025 2 3 2.06744 3 2.15031V4.25008C3 4.33294 3.07025 4.40039 3.15656 4.40039V4.39974Z" fill="black"/>
+</symbol><symbol id="mark-boundless" viewBox="0 0 128 128"><image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAMAAAD04JH5AAAARVBMVEX///9dtLxTsLnB4OOBxMtMrray295YsrqFxcvf7/H7/v6l1NloucGPys/V6+17wcfn9PXK5eid0NVyvsXw+fk9qbO53eFlnuwkAAAD60lEQVR4nO2a65KiMBBGk8YQRQQEh/d/1M0FNJdudCeJW7WV79fsrJVzBnPrBMZqampqampqampqamp+maGZTz2MbBV8ubXD46vwaR0FgJRcnlgDXEoJgs/Dt/DNIkByEyuw/QwwT1/At7DTAwH9TzGWfgwrOLxIQCssJXvD1Hs0REArzMX4VyH5WwH1S16oKywRChfg/OdeAN+xVnwoAGeW/xlMPy1igApovhhz8wUXiAEmYPhc5jXodO9DDBABy+eZDbjp/rFBLLDzzU/ZctqGX2QQCSjqZf8EtLn465MRGoQCLl99+pKH/3CQgUEg4PNV8ggs7vxnDASgAhFfZpmV734vUwbDoxGIQMTP9CWE87/Q8+xVRgIIP8tYjCeahj37pSOA8ZVt+v4galMuWksEAjg/wyMYkCWQn9rN4ClA8DP0gnPYBQxXbAa7AMlPHggPvFm+GWwCNF/tDRIFOPYEngZW4IgvmjQB1h0aGIE3/LRxILtDgx8lII75rUjhq5X10GCd2XA65F+FSNme3VURcmigc8znkLJDvarC78hgtU/piM9lyrbgJvmhQa8+MyP7csO/Gz6XtwQBsxJrgx43gNM+Kcf8wfLt1P3b2LaUAcMNiMLE5fOkbQm8MSAFXL5MEHi2QRhQAi6fp0wEz0YIA0LA4ycJOEcRqAEu4POTvgKXhRmgAgE/qROODhEzwARCvvrM7zO7QMQgPqKB6O9P2pIErUcGUWU0NkM4NULKjuDitxUZhKdkegsaVtBJqyELGpPSNwhLM704BYVM0iCwq9GBQSBgqoA56CYpaxFSlvgGvoDagrdNuDgmbQfUljA+FpKP1+j0BBT/JiCq5JL48XfgG7gCmo9UMakFctildgNhDi0dAZyfoT6O2zQG7KGfwkuA4CftRmxaqtkJHAGCzyHD6Tkp8CrNSH6WQxrsEZhDinG/MaH5iWNwC/poOddjwQqQfNnn4KOPYBsLelcM9PPPcD5igjZuDUZVH17YGefLXGeld2rrP7E7uwwUn4tstzcjVZqZlZbi5zuqJc9JQM+zA/GfmXqgzUr8kWppxE+ReOpGJAzxJagtEFGa5fwCdOJl2QqQtWHSXhgLPhIOBLrMAvgxAF2cZroqcLP8TXG65ufbi6vPBKDM7S1yGERcXObugHviKQe/O845A/lZP7m41OVTsXxwcVmUHxnEAoX5oUFcnpfmszcXl31xvj8ph9VxqfHn5yKo4rTc2yN+uue7LN57RKLEixtE5vjmFPqvvs01SOkJSHH9Jl6lm+FVnEoxfuMlriDTDcBeWpV/gYtIt+rChF//wV9fU1NTU1NTU1NTU/M/5Q/0PCm0jn2OrAAAAABJRU5ErkJggg==" width="128" height="128"/></symbol><symbol id="mark-deepinfra" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><title>DeepInfra</title><path d="M3.294 7.821A2.297 2.297 0 011 5.527a2.297 2.297 0 012.294-2.295A2.297 2.297 0 015.59 5.527 2.297 2.297 0 013.294 7.82zm0-3.688a1.396 1.396 0 000 2.79 1.396 1.396 0 000-2.79zM3.294 14.293A2.297 2.297 0 011 11.998a2.297 2.297 0 012.294-2.294 2.297 2.297 0 012.295 2.294 2.297 2.297 0 01-2.295 2.295zm0-3.688a1.395 1.395 0 000 2.788 1.395 1.395 0 100-2.788zM3.294 20.761A2.297 2.297 0 011 18.467a2.297 2.297 0 012.294-2.295 2.297 2.297 0 012.295 2.295 2.297 2.297 0 01-2.295 2.294zm0-3.688a1.396 1.396 0 000 2.79 1.396 1.396 0 000-2.79zM20.738 7.821a2.297 2.297 0 01-2.295-2.294 2.297 2.297 0 012.294-2.295 2.297 2.297 0 012.295 2.295 2.297 2.297 0 01-2.294 2.294zm0-3.688a1.396 1.396 0 101.395 1.395c0-.77-.626-1.395-1.395-1.395zM20.738 14.293a2.297 2.297 0 01-2.295-2.295 2.297 2.297 0 012.294-2.294 2.297 2.297 0 012.295 2.294 2.297 2.297 0 01-2.294 2.295zm0-3.688c-.769 0-1.395.625-1.395 1.393a1.396 1.396 0 002.79 0c0-.77-.626-1.393-1.395-1.393zM20.738 20.761a2.297 2.297 0 01-2.295-2.294 2.297 2.297 0 012.294-2.295 2.297 2.297 0 012.295 2.295 2.297 2.297 0 01-2.294 2.294zm0-3.688a1.396 1.396 0 101.395 1.395c0-.77-.626-1.395-1.395-1.395zM12.016 11.057a2.297 2.297 0 01-2.294-2.294 2.297 2.297 0 012.294-2.295 2.297 2.297 0 012.295 2.295 2.297 2.297 0 01-2.295 2.294zm0-3.688a1.396 1.396 0 101.395 1.395c0-.77-.625-1.395-1.395-1.395zM12.017 4.589a2.297 2.297 0 01-2.295-2.295A2.297 2.297 0 0112.017 0a2.297 2.297 0 012.294 2.294 2.297 2.297 0 01-2.294 2.295zm0-3.688a1.396 1.396 0 101.395 1.395c0-.77-.626-1.395-1.395-1.395zM12.017 17.529a2.297 2.297 0 01-2.295-2.295 2.297 2.297 0 012.295-2.294 2.297 2.297 0 012.294 2.294 2.297 2.297 0 01-2.294 2.295zm0-3.688a1.396 1.396 0 101.395 1.395c0-.77-.626-1.395-1.395-1.395zM12.016 24a2.297 2.297 0 01-2.294-2.295 2.297 2.297 0 012.294-2.294 2.297 2.297 0 012.295 2.294A2.297 2.297 0 0112.016 24zm0-3.688a1.396 1.396 0 101.395 1.395c0-.77-.625-1.395-1.395-1.395z"></path><path d="M8.363 8.222a.742.742 0 01-.277-.053l-1.494-.596a.75.75 0 11.557-1.392l1.493.595a.75.75 0 01-.278 1.446h-.001zM8.363 14.566a.743.743 0 01-.277-.053l-1.494-.595a.75.75 0 11.557-1.393l1.493.596a.75.75 0 01-.278 1.445h-.001zM17.124 11.397a.741.741 0 01-.277-.054l-1.493-.595a.75.75 0 11.555-1.392l1.493.595a.75.75 0 01-.278 1.446zM17.124 5.05a.744.744 0 01-.277-.054L15.354 4.4a.75.75 0 01.555-1.392l1.493.596a.75.75 0 01-.278 1.445zM17.124 17.739a.743.743 0 01-.277-.053l-1.494-.596a.75.75 0 11.556-1.392l1.493.596a.75.75 0 01-.278 1.445zM6.91 17.966a.75.75 0 01-.279-1.445l1.494-.595a.749.749 0 11.556 1.392l-1.493.595a.743.743 0 01-.277.053H6.91zM6.91 11.66a.75.75 0 01-.279-1.446l1.494-.595a.75.75 0 01.556 1.392l-1.493.595a.743.743 0 01-.277.053H6.91zM6.91 5.033a.75.75 0 01-.279-1.446l1.494-.595a.75.75 0 01.556 1.392l-1.493.596a.744.744 0 01-.277.053H6.91zM8.363 21.364a.743.743 0 01-.277-.053l-1.494-.596a.75.75 0 01.555-1.392l1.494.595a.75.75 0 01-.278 1.446zM15.63 8.223a.75.75 0 01-.278-1.447l1.494-.595a.75.75 0 01.556 1.393l-1.494.595a.744.744 0 01-.276.054h-.002zM15.63 14.567a.75.75 0 01-.278-1.446l1.494-.596a.75.75 0 01.556 1.394l-1.494.595a.743.743 0 01-.276.053h-.002zM15.63 21.363a.749.749 0 01-.278-1.445l1.494-.595a.75.75 0 11.555 1.392l-1.494.595a.741.741 0 01-.277.053z"></path></symbol><symbol id="mark-deepseek" viewBox="0 0 40 40">
+<path d="M35.6638 9.91965C35.3251 9.75432 35.1785 10.0703 34.9811 10.2316C34.9131 10.2836 34.8558 10.3516 34.7985 10.413C34.3025 10.9423 33.7238 11.289 32.9678 11.2476C31.8625 11.1863 30.9186 11.533 30.0839 12.3783C29.9066 11.3356 29.3173 10.7143 28.4213 10.3143C27.9519 10.1063 27.4773 9.89965 27.148 9.44766C26.9186 9.12633 26.856 8.76767 26.7413 8.41568C26.668 8.20235 26.5946 7.98502 26.3506 7.94902C26.084 7.90769 25.98 8.13035 25.876 8.31702C25.4587 9.07967 25.2973 9.91965 25.3133 10.7703C25.3493 12.6849 26.1573 14.2102 27.764 15.2942C27.9466 15.4182 27.9933 15.5435 27.9359 15.7249C27.8266 16.0982 27.696 16.4609 27.5813 16.8355C27.508 17.0742 27.3986 17.1248 27.1426 17.0222C26.2777 16.6504 25.4919 16.1164 24.828 15.4489C23.6854 14.3449 22.6534 13.1263 21.3654 12.1716C21.067 11.9511 20.7606 11.7416 20.4468 11.5436C19.1335 10.2676 20.6201 9.21967 20.9641 9.09567C21.3241 8.965 21.0881 8.51968 19.9254 8.52501C18.7628 8.53035 17.6988 8.91834 16.3428 9.43699C16.1413 9.51421 15.934 9.57529 15.7229 9.61966C14.4557 9.38091 13.1598 9.33506 11.8789 9.48366C9.36565 9.76365 7.35902 10.953 5.88305 12.9809C4.10975 15.4182 3.69243 18.1888 4.20308 21.0768C4.74041 24.122 6.29504 26.6433 8.683 28.6139C11.1603 30.6579 14.0122 31.6592 17.2668 31.4672C19.2428 31.3539 21.4441 31.0886 23.9254 28.9873C24.552 29.2993 25.208 29.4233 26.2986 29.5166C27.1386 29.5953 27.9466 29.4766 28.5719 29.3459C29.5519 29.1379 29.4839 28.23 29.1306 28.0646C26.2573 26.726 26.888 27.2713 26.3133 26.83C27.7746 25.102 29.9746 23.3074 30.8359 17.4928C30.9026 17.0302 30.8452 16.7395 30.8359 16.3662C30.8306 16.1395 30.8826 16.0502 31.1426 16.0249C31.8639 15.95 32.5637 15.7349 33.2025 15.3915C35.0638 14.3742 35.8158 12.7049 35.9931 10.7023C36.0198 10.3956 35.9878 10.081 35.6638 9.91965ZM19.4414 27.9433C16.6562 25.754 15.3055 25.0327 14.7482 25.0634C14.2256 25.0954 14.3202 25.6913 14.4349 26.0807C14.5549 26.4647 14.7109 26.7286 14.9295 27.066C15.0815 27.2886 15.1855 27.6206 14.7789 27.87C13.8816 28.4246 12.3229 27.6833 12.2496 27.6473C10.435 26.578 8.91632 25.1673 7.84834 23.2381C6.81637 21.3808 6.21638 19.3888 6.11771 17.2622C6.09105 16.7475 6.24171 16.5662 6.7537 16.4729C7.42583 16.3442 8.11451 16.3267 8.79233 16.4209C11.6349 16.8368 14.0536 18.1075 16.0828 20.1194C17.2402 21.2661 18.1161 22.6354 19.0188 23.974C19.9788 25.3953 21.0108 26.75 22.3254 27.8593C22.7894 28.2486 23.1587 28.5446 23.5134 28.7619C22.4441 28.8819 20.6601 28.9086 19.4414 27.9433ZM20.7748 19.3568C20.7745 19.2906 20.7904 19.2253 20.8211 19.1666C20.8517 19.1078 20.8962 19.0575 20.9507 19.0198C21.0052 18.9821 21.068 18.9583 21.1337 18.9503C21.1995 18.9424 21.2662 18.9505 21.3281 18.9741C21.407 19.0024 21.475 19.0546 21.5228 19.1235C21.5706 19.1923 21.5958 19.2743 21.5947 19.3581C21.5949 19.4123 21.5843 19.4659 21.5636 19.5159C21.5428 19.5659 21.5123 19.6113 21.4738 19.6494C21.4354 19.6875 21.3897 19.7176 21.3395 19.7378C21.2893 19.7581 21.2356 19.7682 21.1814 19.7675C21.1277 19.7676 21.0745 19.7571 21.0248 19.7365C20.9752 19.7158 20.9302 19.6855 20.8925 19.6473C20.8548 19.609 20.825 19.5636 20.805 19.5138C20.785 19.4639 20.7739 19.4105 20.7748 19.3568ZM24.9213 21.4848C24.6547 21.5928 24.3893 21.6861 24.1347 21.6981C23.7516 21.7114 23.3756 21.5918 23.0707 21.3594C22.7054 21.0528 22.4441 20.8821 22.3347 20.3488C22.297 20.0881 22.3042 19.823 22.3561 19.5648C22.4494 19.1288 22.3454 18.8488 22.0374 18.5955C21.7881 18.3875 21.4694 18.3302 21.1201 18.3302C21.0005 18.3232 20.8843 18.2875 20.7814 18.2262C20.6348 18.1542 20.5148 17.9728 20.6294 17.7488C20.6668 17.6768 20.8428 17.5008 20.8854 17.4688C21.3601 17.1995 21.9081 17.2875 22.4134 17.4902C22.8827 17.6822 23.2374 18.0342 23.748 18.5328C24.2694 19.1341 24.364 19.3008 24.6613 19.7515C24.896 20.1048 25.1093 20.4674 25.2547 20.8821C25.344 21.1421 25.2293 21.3541 24.9213 21.4848Z" fill="currentColor"/>
+</symbol><symbol id="mark-fireworks" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><title>Fireworks</title><path clip-rule="evenodd" d="M14.8 5l-2.801 6.795L9.195 5H7.397l3.072 7.428a1.64 1.64 0 003.038.002L16.598 5H14.8zm1.196 10.352l5.124-5.244-.699-1.669-5.596 5.739a1.664 1.664 0 00-.343 1.807 1.642 1.642 0 001.516 1.012L16 17l8-.02-.699-1.669-7.303.041h-.002zM2.88 10.104l.699-1.669 5.596 5.739c.468.479.603 1.189.343 1.807a1.643 1.643 0 01-1.516 1.012l-8-.018-.002.002.699-1.669 7.303.042-5.122-5.246z"></path></symbol><symbol id="mark-gmicloud" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><title>GmiCloud</title><path d="M15.55 5c.249 0 .45.225.45.5v2c0 .276-.202.5-.45.5h-3.1c-.25 0-.451.226-.451.5v2c0 .277-.203.5-.45.5h-3.1c-.25 0-.451.225-.451.5v2c0 .276.203.5.45.5h3.104c.25 0 .45.225.45.5v2c0 .277.203.5.45.5h3.1c.25 0 .451.225.451.5v2c0 .277-.203.5-.45.5h-7.1c-.25 0-.45-.225-.45-.5v-2c0-.276-.203-.5-.45-.5H4.451c-.25 0-.45-.225-.45-.5v-2c0-.277-.203-.5-.451-.5H.45C.2 14 0 13.775 0 13.5v-2c0-.277.203-.5.45-.5h3.098c.25 0 .45-.225.45-.5v-2c0-.276.203-.5.45-.5H7.55C7.8 8 8 7.775 8 7.5v-2c0-.277.203-.5.451-.5z"></path><path d="M23.55 11.002c.247 0 .45.223.45.5v2c0 .274-.201.5-.45.5h-3.1c-.249 0-.451.223-.451.5v2c0 .274-.202.5-.45.5h-3.101c-.248 0-.45-.224-.45-.5v-4.999c0-.275.2-.5.45-.5h7.1z"></path></symbol><symbol id="mark-inferencenet" viewBox="0 0 128 128"><image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAMAAAD04JH5AAAAOVBMVEVHcEwPDw/29vYBAQEPDw8PDw8vIf8PDw8PDw8PDw/5+fkLCwvX19fr6+u4uLg4ODhQUFAnJyfKysouQNZfAAAACnRSTlMA////xMg3N+iU8JO6+QAAAa5JREFUeJztm8mSgyAURRmkkElb//9jGwUVh1jddpqXxT07SeK7OZiqLLiMrWhtVMv/nVYZrdkZbSoMTzjXmlOEeuMTrdl//abu+IhThQRd+esnWk07v0igaOZz3uTnj2o+54ZyAybmTSAUMCugFDAr0JTzudO0OzDtAdlvMKEY6SMQHwJGO59zBEAABEAABPjsAC5xuLxcKRb3q/uXfhlgSBwuI/mObihZ5w8nngWQXz74yCjTffvOZ7q8IrvgN2SOJUd/5MbBbYBghbU231n23mZyAC47uxHWAN4eEI8DiMgSwMUAYqYMIFaKAOJAeEsASRVA/NmAhQEYgAEYgAEYgAEYgAEYgAEYgAEYgAEYgAEYgAEYgAEYgAEYgAEYgAEYgAEYgIHnAezPDexOULzLgA8T6xmSMSTEFkCEjS1AOPIsgON9Yvl0v7CdoukLlre5/sTrIbfHeJyTE2v6dHm5slssVxMPA1QBARAAARAAARCAvuJBXnIhr/no1/+WaqDpq17kZTf6uh954ZGx+pXbjPqU0it57Zek+MybffubuPpdt/w+jb/s35PU/78Bjb+TX05mxlIAAAAASUVORK5CYII=" width="128" height="128"/></symbol><symbol id="mark-modal" viewBox="0 0 368 192" fill="currentColor">
+  <path d="M148.873 4 183.513 64 111.922 188a8 8 0 0 1-6.929 4H40.333a8 8 0 0 1-6.93-4L1.073 132a8 8 0 0 1 0-8L70.363 4a8 8 0 0 1 6.93-4h64.66a8 8 0 0 1 6.92 4Zm217.09 120L296.672 4a8 8 0 0 0-6.929-4h-64.66a8 8 0 0 0-6.93 4l-34.64 60 71.59 124a8 8 0 0 0 6.93 4h64.66a8 8 0 0 0 6.93-4l32.33-56a8 8 0 0 0 .01-8Z"/>
+</symbol><symbol id="mark-morph" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><title>Morph</title><path d="M7.941 2c.23 0 .452.073.638.21.186.136.325.328.397.55l.593 1.814c.073.221.212.413.397.55.186.136.409.21.638.21h2.791c.23 0 .452-.074.638-.21a1.11 1.11 0 00.397-.55l.594-1.815a1.11 1.11 0 01.397-.55c.185-.136.408-.209.637-.209h1.7c.23 0 .453.073.639.21.185.136.324.328.397.55l.652 1.994c.118.361.41.635.77.728l2.957.752c.236.06.446.199.596.394.15.195.23.436.231.684v9.376c0 .248-.081.488-.231.684a1.09 1.09 0 01-.595.394l-2.957.752a1.086 1.086 0 00-.477.263 1.114 1.114 0 00-.293.465l-.653 1.994a1.11 1.11 0 01-.396.55c-.186.136-.41.21-.638.21h-1.702c-.229 0-.452-.073-.637-.21a1.11 1.11 0 01-.397-.55l-.364-1.11a1.131 1.131 0 01.15-1.002 1.074 1.074 0 01.885-.462h2.85c.29 0 .567-.116.772-.325.204-.208.32-.49.32-.785V6.444c0-.294-.116-.577-.32-.785a1.08 1.08 0 00-.771-.326h-3.273c-.29 0-.567.117-.772.326-.204.208-.32.49-.32.785v7.778c0 .295-.114.578-.319.786a1.08 1.08 0 01-.771.325h-2.182a1.08 1.08 0 01-.771-.325 1.122 1.122 0 01-.32-.786V6.444c0-.294-.115-.577-.32-.785a1.081 1.081 0 00-.77-.326H5.454c-.29 0-.567.117-.772.326-.204.208-.32.49-.32.785v11.112c0 .294.116.577.32.785.205.209.482.326.772.326h2.85a1.075 1.075 0 01.885.461 1.122 1.122 0 01.15 1.001l-.364 1.112a1.11 1.11 0 01-.397.55c-.185.136-.408.209-.637.209H6.24c-.229 0-.452-.073-.638-.21a1.11 1.11 0 01-.397-.55l-.652-1.994a1.114 1.114 0 00-.294-.465 1.086 1.086 0 00-.477-.263l-2.956-.752a1.09 1.09 0 01-.595-.394A1.124 1.124 0 010 16.688V7.312c0-.248.081-.489.231-.684.15-.195.36-.334.595-.394l2.957-.753c.178-.045.342-.136.477-.263.134-.127.235-.287.293-.464l.653-1.995a1.11 1.11 0 01.397-.55C5.788 2.075 6.01 2 6.24 2h1.701z"></path></symbol><symbol id="mark-novita" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><title>Novita AI</title><path clip-rule="evenodd" d="M9.167 4.17v5.665L0 19.003h9.167v-5.666l5.666 5.666H24L9.167 4.17z"></path></symbol><symbol id="mark-openai" viewBox="0 0 40 40">
+<path d="M32.8377 17.282C33.2127 16.25 33.3072 15.218 33.2127 14.1875C33.1197 13.1571 32.7447 12.1251 32.2752 11.1876C31.4322 9.78209 30.2127 8.6571 28.8072 8.0001C27.3072 7.34461 25.7127 7.15711 24.1197 7.53211C23.3698 6.78212 22.5253 6.12512 21.5878 5.65713C20.6503 5.18913 19.5253 5.00013 18.4948 5.00013C16.8851 4.99074 15.3125 5.48246 13.9948 6.40712C12.6824 7.34311 11.7449 8.6571 11.2754 10.1571C10.1504 10.4376 9.21289 10.9071 8.27539 11.4696C7.4324 12.1251 6.77541 12.9696 6.21291 13.8126C5.36992 15.2195 5.08792 16.8125 5.27542 18.407C5.46399 19.9968 6.11605 21.496 7.1504 22.718C6.79608 23.7086 6.66795 24.7659 6.77541 25.8124C6.86991 26.8444 7.2449 27.8749 7.7129 28.8124C8.55739 30.2194 9.77538 31.3444 11.1824 31.9999C12.6824 32.6569 14.2753 32.8444 15.8698 32.4694C16.6198 33.2194 17.4628 33.8749 18.4003 34.3444C19.3378 34.8139 20.4628 34.9999 21.4948 34.9999C23.1043 35.0097 24.6769 34.5185 25.9947 33.5944C27.3072 32.6569 28.2447 31.3444 28.7127 29.8444C29.7719 29.6432 30.7682 29.1934 31.6197 28.5319C32.4627 27.8749 33.2127 27.1249 33.6822 26.1874C34.5251 24.7819 34.8071 23.1875 34.6196 21.5945C34.4322 20 33.8697 18.5015 32.8377 17.282ZM21.5878 33.0304C20.0878 33.0304 18.9628 32.5609 17.9323 31.7179C17.9323 31.7179 18.0253 31.6234 18.1198 31.6234L24.1197 28.1554C24.2862 28.0803 24.4196 27.9469 24.4947 27.7804C24.5698 27.636 24.6021 27.4731 24.5877 27.3109V18.875L27.1197 20.375V27.3124C27.1455 28.0547 27.0215 28.7945 26.755 29.4878C26.4885 30.181 26.085 30.8134 25.5687 31.3473C25.0523 31.8811 24.4337 32.3054 23.7497 32.5949C23.0658 32.8843 22.3305 33.0314 21.5878 33.0304ZM9.49488 27.8749C8.83789 26.7499 8.55739 25.4374 8.83789 24.125C8.83789 24.125 8.93239 24.2195 9.02539 24.2195L15.0253 27.6874C15.1693 27.7638 15.3325 27.7966 15.4948 27.7819C15.6823 27.7819 15.8698 27.7819 15.9628 27.6874L23.2753 23.4695V26.3749L17.1823 29.9374C16.5506 30.3042 15.8527 30.5427 15.1287 30.6393C14.4046 30.7358 13.6686 30.6884 12.9629 30.4999C11.4629 30.1249 10.2449 29.1874 9.49488 27.8749ZM7.9004 14.8445C8.56239 13.7234 9.58826 12.8627 10.8074 12.4056V19.532C10.8074 19.718 10.8074 19.907 10.9004 20C10.9755 20.1665 11.1089 20.2998 11.2754 20.375L18.5878 24.5944L16.0573 26.0944L10.0574 22.625C9.41842 22.2639 8.85742 21.7797 8.40684 21.2004C7.95627 20.6211 7.62506 19.9582 7.4324 19.25C7.05741 17.8445 7.1504 16.157 7.9004 14.8445ZM28.6197 19.625L21.3073 15.407L23.8377 13.9071L29.8377 17.375C30.7752 17.9375 31.5252 18.6875 31.9947 19.625C32.4642 20.5625 32.7447 21.5945 32.6502 22.7195C32.5603 23.7755 32.1699 24.7837 31.5252 25.6249C30.8697 26.4694 30.0252 27.1249 28.9947 27.4999V20.375C28.9947 20.1875 28.9947 20 28.9002 19.907C28.9002 19.907 28.8072 19.718 28.6197 19.625ZM31.1502 15.875C31.1502 15.875 31.0572 15.782 30.9627 15.782L24.9627 12.3126C24.7752 12.2196 24.6822 12.2196 24.4947 12.2196C24.3072 12.2196 24.1197 12.2196 24.0252 12.3126L16.7128 16.532V13.6251L22.8073 10.0626C23.7448 9.50009 24.7752 9.31259 25.9002 9.31259C26.9322 9.31259 27.9627 9.68759 28.9002 10.3446C29.7447 11.0001 30.4947 11.8446 30.8697 12.7821C31.2447 13.7196 31.3377 14.8445 31.1502 15.875ZM15.4003 21.125L12.8699 19.625V12.5946C12.8699 11.5626 13.1503 10.4376 13.7128 9.59459C14.2753 8.6571 15.1198 8.0001 16.0573 7.53211C17.0127 7.05249 18.0956 6.88812 19.1503 7.06261C20.1823 7.15711 21.2128 7.62511 22.0573 8.2821C22.0573 8.2821 21.9628 8.3751 21.8698 8.3751L15.8698 11.8446C15.7033 11.9197 15.57 12.0531 15.4948 12.2196C15.4003 12.4071 15.4003 12.5001 15.4003 12.6876V21.125ZM16.7128 18.125L19.9948 16.25L23.2753 18.125V21.875L19.9948 23.75L16.7128 21.875V18.125Z" fill="currentColor"/>
+</symbol><symbol id="mark-openrouter" viewBox="0 0 24 24" fill="none">
+<path d="M728.039 234C819.325 234 893.323 308.62 893.323 400.668C893.323 492.716 819.325 567.336 728.039 567.336L891.984 732.656C912.81 753.655 898.061 789.56 868.613 789.56H397.472C245.333 789.56 122 665.193 122 511.78C122 358.367 245.333 234 397.472 234H728.039ZM397.472 345.112C306.189 345.112 232.189 419.732 232.189 511.78C232.189 603.828 306.189 678.448 397.472 678.448C488.756 678.448 562.756 603.828 562.756 511.78C562.756 419.732 488.756 345.112 397.472 345.112Z" fill="currentColor" transform="scale(0.0234375)"/>
+</symbol><symbol id="mark-parasail" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><title>Parasail</title><path d="M0 15.852c4.5 0 8.147 3.648 8.147 8.148H0v-8.148z"></path><path clip-rule="evenodd" d="M0 7.688v.018C9 7.706 16.294 15 16.294 24h.019l-.018-.036c3.33-.2 8.864-2.447 7.49-9.58A19.95 19.95 0 009.61.213C2.482-1.155.235 4.374.036 7.704L0 7.688z"></path></symbol><symbol id="mark-particle" viewBox="0 0 128 128"><image href="data:image/png;base64,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" width="128" height="128"/></symbol><symbol id="mark-relace" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><title>Relace</title><path d="M23 23H1V1h22v22zM2.962 15.232c1.969.3 5.028.42 7.78-.171.904-.195 1.743-.46 2.49-.803-1.395-3.4-1.675-5.766-1.264-7.378.466-1.823 1.799-2.59 2.998-2.602h.01c.688 0 2.117.177 3.081 1.35 1.003 1.22 1.216 3.152.26 5.991-.504 1.493-1.437 2.616-2.594 3.456 1.323 2.993 2.11 4.498 2.588 5.284.223.367.372.564.467.679h2.26V2.962H2.962v12.27zm11.05.827c-.912.413-1.887.711-2.857.92-2.91.626-6.059.527-8.193.234v3.825h13.471c-.527-.92-1.287-2.424-2.421-4.98zm.97-9.82c-.323.005-.87.181-1.112 1.127-.25.975-.161 2.776 1.055 5.84.705-.598 1.233-1.329 1.531-2.213.868-2.576.455-3.67.086-4.119-.406-.494-1.09-.633-1.56-.634z"></path></symbol><symbol id="mark-runware" viewBox="0 0 128 128"><image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAMAAAD04JH5AAAAdVBMVEWv/58bGxuz/6MNABByomh0pmpqlWETCRSx/6EaGRoZFxkAAAAUDBUIAAyt/J0VDxaOzYKp9pqa34xTc02AuHWGwHp8snKT1IY9UDik7pVii1sZFBpHYEJMaEYmLiWg6JJXelA3SDQsNyohJCBdglYwPS1CWD3c2gq4AAADVUlEQVR4nO1aYZeaMBCERGSJgICgp5yIx53//yfW1+trPXWiWfbo62vmM5hlstmdnRgEHh4eHh4eHh4eHv8AFA8ktX4ZzVlYC0VA1UKzsNgIRVC+LEMO0n0uEwA1ScIJIEkaKQpOTApepSgoMlYA4aJRMhEoZhYsX8QoaFlZELZSRzHvUyYFW5kAqDC8g6DXUlmwilkUJFoqC6qYlwXZTIiCYMejoD0eZPKQqjfDikDPRdY/R/CuWQGYQeggBGXLpOBdKAtozqSgq4Sy4HBsWRHEO5H1zxHMeEfRDEIUBOXAzIKVVDmMeFmQiImz7ZHXluNeqiCveW3ZhGLijKlMYil9qupFzMJCqhzSjDekREIMsMc0qZ7834AgvuvFK9QzgOLBiwV6sXZav0TjcNbZT9N2yNCkXLoEkMNyYxcXqke9wnFKpAZVXNNaJCZVIeiWJizckqDco0HIKi7ekXBOV451iArEpRngt1AxAN4S7dyO1Ql9jO7Rb6k9eid+dS6E5+1EfReJCyoWkDWGJMvhIJTuwRuWvGF0Itp0IKOT++KCGsQZU5arHT7T94pKeUIE6DmvFW41okDfcX5UrREB5sBaP6AITQFtd7un5RsYWpKY69LgQShZ3tgeFC1RtPzxnGYoC5YvV6xaprZsjEcDByE9+/pVCsZquhF6XK2RP2mSr1mQpyhhs3qMGixfYVveXf4u9i7SvZMOuAbVyJwzHxfFhaoPRICpx01EBF1qfdmWcc06jZzIqMigMvlNgcXBc2/D18hhi/0z82MPU7vqkFtYepL5pUyoQNcZppOwBVZof+P+M8FLTEA/fvlzjUNCO3v7mQVUdegJvZUwBVQdATSfG1w28AEhd+7RveTDBzy+G397C3ASjmqET8NyDDOhq4oHKHtciadY/1yK4Uw8SDm0dihcraXsSTuogoJMO9oCXEBBshwrSJ6DRZK1IyXZsxFgCu7OkfLI4YXaqLnkeVgGk2GaNDxAYy+LpqFg/Q3DqRNyPJ5H05TDBhoU6UQ9CVs0u2nasrRJ5Qxhm84dtIFGZTgNBXhGjE/TZMEGWTpJNo0ywf9zEftjnx34wgLYu+JQ2Cs6TUJBsIUSXezu+AHgtd16GgbELi49PDw8PDw8PDymxA/+ITzfvCtf3AAAAABJRU5ErkJggg==" width="128" height="128"/></symbol><symbol id="mark-togetherai" viewBox="0 0 40 40">
+<path opacity="0.25" d="M27.539 18.922C29.2526 18.922 30.8959 18.2413 32.1076 17.0296C33.3193 15.8179 34 14.1746 34 12.461C34 10.7474 33.3193 9.10406 32.1076 7.89238C30.8959 6.68071 29.2526 6 27.539 6C25.8254 6 24.1821 6.68071 22.9704 7.89238C21.7587 9.10406 21.078 10.7474 21.078 12.461C21.078 14.1746 21.7587 15.8179 22.9704 17.0296C24.1821 18.2413 25.8254 18.922 27.539 18.922ZM27.539 34C29.2526 34 30.8959 33.3193 32.1076 32.1076C33.3193 30.8959 34 29.2526 34 27.539C34 25.8254 33.3193 24.1821 32.1076 22.9704C30.8959 21.7587 29.2526 21.078 27.539 21.078C25.8254 21.078 24.1821 21.7587 22.9704 22.9704C21.7587 24.1821 21.078 25.8254 21.078 27.539C21.078 29.2526 21.7587 30.8959 22.9704 32.1076C24.1821 33.3193 25.8254 34 27.539 34ZM12.461 34C14.1746 34 15.8179 33.3193 17.0296 32.1076C18.2413 30.8959 18.922 29.2526 18.922 27.539C18.922 25.8254 18.2413 24.1821 17.0296 22.9704C15.8179 21.7587 14.1746 21.078 12.461 21.078C10.7474 21.078 9.10406 21.7587 7.89238 22.9704C6.68071 24.1821 6 25.8254 6 27.539C6 29.2526 6.68071 30.8959 7.89238 32.1076C9.10406 33.3193 10.7474 34 12.461 34Z" fill="currentColor"/>
+<path d="M12.461 18.922C16.0293 18.922 18.922 16.0293 18.922 12.461C18.922 8.89269 16.0293 6 12.461 6C8.89269 6 6 8.89269 6 12.461C6 16.0293 8.89269 18.922 12.461 18.922Z" fill="currentColor"/>
+</symbol><symbol id="mark-wafer" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><title>Wafer</title><path d="M0 12c0 6.617 5.395 12 12.026 12H24V0H12.026C5.395 0 0 5.383 0 12m3.518 0c0-4.81 3.861-8.726 8.608-8.726S20.733 7.189 20.733 12c0 4.81-3.861 8.726-8.607 8.726-4.747 0-8.608-3.915-8.608-8.726"></path></symbol><symbol id="mark-xiaomi" viewBox="0 0 40 40">
+<path d="M17.3598 5.03522C13.6378 5.20577 11.3905 5.78765 9.47432 7.07179C8.10992 7.97471 7.10668 9.14849 6.38435 10.6935C5.59179 12.389 5.24066 14.255 5.09017 17.7262C4.90959 21.6087 5.17043 25.4812 5.75231 27.5378C6.27399 29.4039 7.10668 30.8285 8.38079 32.0223C9.95588 33.487 11.7216 34.2595 14.4604 34.6709C16.9685 35.0421 22.7773 35.0621 25.3154 34.711C28.4054 34.2896 30.3718 33.4168 31.987 31.7414C32.7896 30.9187 33.1608 30.377 33.6824 29.2835C34.4951 27.5679 34.8261 25.7922 34.9867 22.2407C35.107 19.7026 34.9867 16.0909 34.7358 14.4055C34.1439 10.4527 32.4585 7.88441 29.519 6.39962C27.964 5.62713 25.6766 5.17567 22.4963 5.02519C20.0986 4.91483 19.7776 4.91483 17.3598 5.03522ZM21.0617 14.3854C22.386 14.6964 23.0281 15.1378 23.4494 16.0407C23.8808 16.9637 23.951 17.7262 23.951 21.8896V25.8022L22.5264 25.7721L21.0918 25.742L21.0417 21.9297C20.9915 17.7663 20.9714 17.6359 20.3895 17.1844C19.8679 16.7731 19.4264 16.7229 16.5772 16.7129H13.8685L13.8183 21.2275L13.7682 25.742H10.9591L10.929 20.0336C10.909 15.5291 10.939 14.2951 11.0293 14.2349C11.0996 14.1847 13.2365 14.1647 15.7747 14.1847C19.4967 14.2249 20.52 14.265 21.0617 14.3854ZM28.9472 14.3252C29.0174 14.4657 29.0475 25.3708 28.9773 25.722C28.9773 25.7621 28.3252 25.7822 27.5426 25.7721L26.108 25.742L26.0779 20.0838C26.0679 15.9906 26.0879 14.3854 26.1682 14.2951C26.2585 14.1847 26.6096 14.1546 27.5727 14.1546C28.6964 14.1546 28.8669 14.1747 28.9472 14.3252ZM18.9349 22.2307V25.8022L17.4601 25.7721L15.9753 25.742L15.9452 22.331C15.9352 20.455 15.9452 18.8598 15.9753 18.7996C16.0054 18.6993 16.3967 18.6692 17.4802 18.6692H18.9349V22.2307Z" fill="currentColor"/>
+</symbol><symbol id="mark-zai" viewBox="0 0 40 40">
+<path d="M20.1312 7.50002L17.4088 11.1913H5.81625L8.5375 7.50002H20.1325H20.1312ZM34.0675 28.81L31.3475 32.5H19.795L22.5125 28.81H34.0675ZM35 7.50002L16.58 32.5H5L23.42 7.50002H35Z" fill="currentColor"/>
+</symbol></svg>
+
+<script>
+(() => {
+  'use strict';
+  /* 真实网关清单顺序（与 docs/hover-card-preview.html 一致） */
+  const CHANNELS = ['novita', 'deepseek', 'togetherai', 'baseten', 'modal', 'openrouter', 'fireworks',
+    'deepinfra', 'alibaba', 'zai', 'gmicloud', 'wafer', 'xiaomi', 'parasail', 'relace', 'morph', 'runware',
+    'inferencenet', 'particle', 'boundless', 'openai'];
+  /* 由 tools/sync-preview.mjs 从 dsh/client.js 生成 */
+  /*BRAND_ALIASES_BEGIN*/
+const ALIASES = {together: 'togetherai', zhipu: 'zai'};
+/*BRAND_ALIASES_END*/
+  /** 与插件一致的 slug 归一（别名表也来自插件）。 */
+  const keyOf = (name) => {
+    const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '');
+    return ALIASES[slug] ?? slug;
+  };
+  const $ = (id) => document.getElementById(id);
+
+  const state = {
+    enabled: false, mode: 'order', channel: null,
+    key: true,                        // 是否已配置 cline 密钥
+    phase: 'idle',                    // idle | loading | list | empty | nokey
+    live: 'none',                     // none | ok | bad
+    layout: 'grid', icons: true, search: true,
+  };
+
+  /* ---------- 渲染 ---------- */
+  const markNode = (key, cls) => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', cls);
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#mark-' + key);
+    svg.append(use);
+    return svg;
+  };
+
+  function renderList() {
+    const q = state.search ? $('cp-search').value.trim().toLowerCase() : '';
+    const rows = CHANNELS.filter((name) => q === '' || name.includes(q));
+    const list = $('cp-list');
+    list.className = state.layout === 'grid' ? 'cp-grid' : 'cp-list';
+    list.replaceChildren(...rows.map((name) => {
+      const key = keyOf(name);
+      const li = document.createElement('li');
+      /* 品牌类挂在行上：图标 currentColor 与名字一起取色（与悬浮卡片同一套做法） */
+      li.className = 'cp-item cline-' + key;
+      li.dataset.selected = String(state.channel === name);
+      if (state.icons) li.append(markNode(key, 'cp-mark'));
+      const label = document.createElement('span');
+      label.className = 'cp-name';
+      label.textContent = name;
+      li.append(label);
+      li.addEventListener('click', () => { state.channel = name; render(); });
+      return li;
+    }));
+    $('cp-count').textContent = rows.length === CHANNELS.length
+      ? '共 ' + CHANNELS.length + ' 个渠道，按网关自报顺序'
+      : '匹配 ' + rows.length + ' / ' + CHANNELS.length + ' 个渠道';
+  }
+
+  function renderLive() {
+    const box = $('cp-live');
+    if (state.live === 'none') {
+      box.innerHTML = '<span class="cp-off">还没有可判定的调用 —— 发一条消息后这里会显示实际落点。</span>';
+      return;
+    }
+    if (state.live === 'ok') {
+      box.innerHTML = '<span style="color:var(--dsw-alias-label-primary)">' + state.channel + '</span>'
+        + '<span class="cp-ok">✔ 已生效</span>';
+      return;
+    }
+    box.innerHTML = '<span style="color:var(--dsw-alias-label-primary)">deepseek</span>'
+      + '<span class="cp-bad">✘ 未生效</span>'
+      + (state.mode === 'only'
+        ? '<span class="cp-warnmark">严格模式下这次调用已按预期失败。</span>'
+        : '<span>网关没有采纳该渠道，可能是它临时不可用；已回退。</span>');
+  }
+
+  function render() {
+    const on = state.enabled;
+    $('cp-switch').setAttribute('aria-checked', String(on));
+    $('cp-on').hidden = !on;
+    $('cp-desc').textContent = on
+      ? '已开启：Cline 的调用会按下面的方式落到指定渠道；关掉开关即恢复原样。'
+      : '关闭时请求原样发出，不做任何改写。';
+    $('cp-mode').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode)));
+    $('cp-mode-warn').hidden = state.mode !== 'only';
+    $('cp-mode-hint').hidden = state.mode === 'only';
+
+    const picked = state.channel !== null;
+    $('cp-loading').hidden = !(on && state.phase === 'loading');
+    $('cp-empty').hidden = !(on && state.phase === 'empty');
+    $('cp-nokey').hidden = !(on && state.phase === 'nokey');
+    $('cp-tools').hidden = !state.search;
+    $('cp-pick-field').hidden = !(on && state.phase === 'list' && !picked);
+    $('cp-current-field').hidden = !(on && picked);
+    $('cp-live-field').hidden = !(on && picked);
+    $('cp-half').hidden = !(on && !picked && state.phase !== 'loading' && state.phase !== 'empty' && state.phase !== 'nokey');
+    $('cp-mode-field').hidden = !on;
+
+    if (picked) {
+      const wrap = $('cp-current-mark');
+      wrap.replaceChildren(state.icons ? markNode(keyOf(state.channel), 'cp-mark') : document.createTextNode(''));
+      $('cp-current-name').textContent = state.channel;
+      $('cp-current-mode').textContent = state.mode === 'order' ? '优先' : '严格';
+      renderLive();
+    }
+    if (state.phase === 'list') renderList();
+  }
+
+  let probeTimer = 0;
+  function probe(after) {
+    if (!state.key) { state.phase = 'nokey'; render(); return; }
+    state.phase = 'loading';
+    render();
+    clearTimeout(probeTimer);
+    probeTimer = setTimeout(() => { state.phase = 'list'; if (after) after(); render(); }, 700);
+  }
+
+  /* ---------- 交互 ---------- */
+  $('cp-switch').addEventListener('click', () => {
+    state.enabled = !state.enabled;
+    if (state.enabled && state.phase === 'idle') probe();
+    if (!state.enabled) { state.channel = null; state.live = 'none'; state.phase = 'idle'; }
+    render();
+  });
+  $('cp-mode').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (b === null) return;
+    state.mode = b.dataset.mode;
+    render();
+  });
+  $('cp-search').addEventListener('input', render);
+  $('cp-refresh').addEventListener('click', () => probe());
+  $('cp-change').addEventListener('click', () => { state.channel = null; state.phase = 'list'; render(); });
+  $('cp-clear').addEventListener('click', () => { state.channel = null; state.phase = 'list'; render(); });
+  const useManual = (input) => {
+    const v = input.value.trim();
+    if (v === '') return;
+    state.channel = v; state.phase = 'list'; render();
+  };
+  $('cp-manual-use').addEventListener('click', () => useManual($('cp-manual')));
+  $('cp-manual-use2').addEventListener('click', () => useManual($('cp-manual2')));
+  $('cp-recheck').addEventListener('click', () => { state.key = true; probe(); });
+
+  /* ---------- 开发工具条 ---------- */
+  document.querySelectorAll('[data-theme]').forEach((b) => b.addEventListener('click', () => {
+    const dark = b.dataset.theme === 'dark';
+    document.body.toggleAttribute('data-ds-dark-theme', dark);   // 真机属性
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light'; // 仅为配合 sync 脚本生成的品牌色规则
+    document.querySelectorAll('[data-theme]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    render();
+  }));
+  document.querySelectorAll('[data-opt]').forEach((b) => b.addEventListener('click', () => {
+    state[b.dataset.opt] = b.dataset.value === 'on' ? true : b.dataset.value === 'off' ? false : b.dataset.value;
+    document.querySelectorAll('[data-opt="' + b.dataset.opt + '"]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    render();
+  }));
+
+  const SCENES = [
+    ['关闭（默认）', { enabled: false }],
+    ['开启·探测中', { enabled: true, phase: 'loading' }],
+    ['开启·未选渠道', { enabled: true, phase: 'list' }],
+    ['已钉住·已生效', { enabled: true, phase: 'list', channel: 'novita', mode: 'order', live: 'ok' }],
+    ['已钉住·未生效', { enabled: true, phase: 'list', channel: 'novita', mode: 'order', live: 'bad' }],
+    ['严格模式·失败', { enabled: true, phase: 'list', channel: 'novita', mode: 'only', live: 'bad' }],
+    ['清单为空·手填', { enabled: true, phase: 'empty' }],
+    ['未配置密钥', { enabled: true, phase: 'nokey', key: false }],
+  ];
+  const scenes = $('scenes');
+  SCENES.forEach(([label], i) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.dataset.scene = String(i);
+    b.addEventListener('click', () => {
+      Object.assign(state, { enabled: false, phase: 'idle', channel: null, mode: 'order', live: 'none', key: true }, SCENES[i][1]);
+      clearTimeout(probeTimer);
+      document.querySelectorAll('[data-scene]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      render();
+    });
+    scenes.append(b);
+  });
+
+  render();
+  scenes.querySelector('[data-scene="3"]').click();
+})();
+</script>
+</body>
+</html>

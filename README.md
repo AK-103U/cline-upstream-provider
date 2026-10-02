@@ -31,6 +31,10 @@ dsh plugin --profile web add @ak-103u/cline-upstream-provider
 
 安装后在输入框下方展示路由链路（如 `deepseek → alibaba`）。支持厂商 Logo 与品牌色渲染，状态随会话隔离，适配亮/暗色主题，无路由数据时不占位。
 
+悬浮卡片里同时给出 **Cline Pass 额度**：5h / 7d / 月三个滚动窗口的已用进度条、百分比与重置倒计时，外加一行套餐与到期信息；设置 → 插件 → 本插件详情页里有完整读数（账号、三条窗口、套餐与周期、更新时间和诊断）。额度由宿主半体用这条路由的密钥去读，**60 秒缓存、失败保留旧值**，浏览器拿不到密钥；未配置 Cline 时整块不显示，也不会报错。效果稿见 [docs/quota-preview.html](docs/quota-preview.html)，设计说明见 [docs/dsh-quota.md](docs/dsh-quota.md)。
+
+> 接口只给百分比，没有余额或剩余额度，所以这里不显示“还剩多少钱”。
+
 ### pi
 
 通过 npm 安装：
