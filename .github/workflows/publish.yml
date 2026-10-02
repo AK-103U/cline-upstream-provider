@@ -41,7 +41,7 @@ jobs:
           fetch-depth: 0 # full history needed for the release notes
 
       - name: Set up Node and the npm registry
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
