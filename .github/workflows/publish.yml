@@ -1,0 +1,69 @@
+name: Publish to npm and GitHub Release
+
+# Publishing is tag-driven: pushing a `v*` tag publishes the tagged commit and
+# creates a GitHub Release with the npm tarball attached. GitHub adds the
+# source archives (zip/tar.gz) automatically; there is no build step in this
+# repository, so `npm pack` is the whole "build".
+#
+# Requires the repository secret `NPM_TOKEN`: a granular access token with
+# read/write access to packages and 2FA bypass (or an automation token).
+#
+# Alternative without a secret: npm trusted publishing (OIDC). Configure the
+# trusted publisher on npmjs.com (owner `AK-103U`, repository
+# `cline-upstream-provider`, workflow `publish.yml`) and drop the
+# NODE_AUTH_TOKEN env from the publish step; `id-token: write` stays.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the GitHub Release
+  id-token: write # npm provenance
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node and npm
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify the tag matches package.json
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version="$(node -p "require('./package.json').version")"
+          echo "tag=$tag_version package=$pkg_version"
+          test "$tag_version" = "$pkg_version"
+
+      - name: Pack
+        run: npm pack
+
+      - name: Publish to npm
+        run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" ./*.tgz --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" ./*.tgz \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
