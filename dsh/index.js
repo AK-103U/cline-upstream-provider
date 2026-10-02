@@ -17,9 +17,17 @@
  * fields (`openRouterRouting` / `vercelGatewayRouting`) are withheld by the shipped
  * profile gate, so no profile can declare them and the wire is what is left. With no
  * pin the wrapper forwards the request untouched, byte for byte.
+ *
+ * Finally it serves the account's Cline Pass usage: the three rolling limit windows,
+ * the plan line, and the account line, read from the gateway's account endpoints with
+ * the same key this profile uses for model calls (docs/cline-api.md). That read is the
+ * only one this plugin makes on its own behalf, so it lives in ./host/usage.js with its
+ * own cache, in-flight sharing and failure ladder — and the key never leaves this file.
  */
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { channelListOf, probeBodies, probeReasonOf } from './host/probe.js';
+import { createUsageSource } from './host/usage.js';
 
 /** The only endpoint whose responses carry a Cline route decision. */
 const CLINE_CHAT = { protocol: 'https:', hostname: 'api.cline.bot', pathname: '/api/v1/chat/completions' };
@@ -29,6 +37,8 @@ const ICON_PATH = '/api/cline-upstream-provider/icon';
 const CHANNELS_PATH = '/api/cline-upstream-provider/channels';
 /** Read or replace the pin: `GET` answers the state, `POST` writes one. */
 const PIN_PATH = '/api/cline-upstream-provider/pin';
+/** The account's limit windows and plan line; `?refresh=1` asks for a fresh read. */
+const USAGE_PATH = '/api/cline-upstream-provider/usage';
 /**
  * The environment reference the Cline route resolves for its key — the route's own
  * `apiKeyEnv` in the profile. This plugin only ever *describes* that reference (never
@@ -44,12 +54,12 @@ const CHAIN_LIMIT = 3;
 const ATTRIBUTION_TTL = 5000;
 /** Bound on declared calls that have not reached Cline yet. */
 const PENDING_LIMIT = 64;
-/** A channel name that cannot exist, so the gateway lists the real ones instead of routing. */
-const PROBE_CHANNEL = '__probe__';
 /** How long a probed channel list is reused. Probing costs a small real amount. */
 const CHANNELS_TTL = 600000;
 /** How long a probe that produced no list is left alone before trying again. */
 const CHANNELS_RETRY = 60000;
+/** The same, for a probe the user asked for by hand: long enough to swallow a double click. */
+const CHANNELS_FLOOR = 5000;
 /** Bound on one probe request. */
 const PROBE_TIMEOUT = 20000;
 
@@ -155,53 +165,6 @@ function routeOf(payload) {
     }
   }
   return undefined;
-}
-
-/**
- * Split a gateway channel list without reordering it.
- * @param value - comma or whitespace separated channel names.
- * @returns the names in the order the gateway stated them.
- */
-function splitChannels(value) {
-  return String(value)
-    .split(/[,\s]+/u)
-    .map((name) => name.trim())
-    .filter((name) => /^[a-z0-9][a-z0-9-]*$/iu.test(name));
-}
-
-/**
- * The channel list a probe response states, in the gateway's own order.
- * Both pipelines answer a nonexistent channel with the real list: the planner
- * inside its error text, the direct pipeline inside `error.metadata`, so the
- * shape that answered also says which pipeline was just probed.
- * @param text - the probe response body, SSE or JSON.
- * @returns the names and the pipeline that stated them.
- */
-function channelListOf(text) {
-  const stated = /Available providers are:\s*([^."]+)/iu.exec(text);
-  if (stated !== null) return { list: splitChannels(stated[1]), pipeline: 'planner' };
-  const fromBody = (value) => {
-    const list = value?.error?.metadata?.available_providers ?? value?.metadata?.available_providers;
-    return Array.isArray(list) ? splitChannels(list.join(',')) : undefined;
-  };
-  const found = (list) => (list === undefined ? undefined : { list, pipeline: 'direct' });
-  try {
-    const parsed = found(fromBody(JSON.parse(text)));
-    if (parsed !== undefined) return parsed;
-  } catch {
-    /* not a whole JSON body; an SSE stream carries one JSON object per line */
-  }
-  for (const line of text.split(/\r?\n/u)) {
-    const data = line.trim().startsWith('data:') ? line.trim().slice(5).trim() : '';
-    if (data === '' || data === '[DONE]') continue;
-    try {
-      const parsed = found(fromBody(JSON.parse(data)));
-      if (parsed !== undefined) return parsed;
-    } catch {
-      /* one unparsable frame is not the whole answer */
-    }
-  }
-  return { list: [], pipeline: '' };
 }
 
 /**
@@ -341,8 +304,8 @@ export function apply(ctx) {
   const last = { value: undefined };
   /** Credentials seen on a real Cline request; a probe reuses them and nothing else. */
   const credentials = { authorization: undefined, model: undefined };
-  /** The probed channel list, its pipeline, and when it was taken. */
-  const channels = { at: 0, tried: 0, pipeline: '', list: [], pending: undefined };
+  /** The probed channel list, its pipeline, when it was taken, and the last attempt. */
+  const channels = { at: 0, tried: 0, pipeline: '', list: [], attempt: undefined, pending: undefined };
   /** `fetch` as it was before this plugin wrapped it, so a probe is never observed by us. */
   let native = globalThis.fetch;
   let requestId = 0;
@@ -425,25 +388,35 @@ export function apply(ctx) {
   };
 
   /**
+   * The account's usage snapshot. It shares this plugin's key resolution — the same
+   * route detection and the same credential reference a model call uses — and only
+   * its own cache ever holds the result: the gateway's answer, never the key.
+   */
+  const usage = createUsageSource({
+    authorize: async () => {
+      const header = await authOf(detectRoute());
+      if (header === undefined) return undefined;
+      return header.authorization ?? header['x-api-key'];
+    },
+    // Two configuration states, two different fixes: no route to the gateway at all,
+    // or a route whose key does not resolve.
+    explainMissing: () => (detectRoute() === undefined ? 'no-route' : 'no-key'),
+  });
+
+  /**
    * Ask the gateway for its channel list by pinning a channel that cannot exist.
    * The request is refused at the routing layer, so no model runs and no token is spent.
    * The key and the model come from traffic already seen, else from the composed route —
    * which is what lets a fresh profile list channels before its first Cline call.
+   * @param fields - the pin fields of one attempt, from `probeBodies`.
    * @returns the probe response, or undefined when there is nothing to probe with.
    */
-  const sendProbe = async () => {
+  const sendProbe = async (fields) => {
     const route = detectRoute();
     const authorization = credentials.authorization ?? (await authOf(route));
     const model = credentials.model ?? route?.model;
     if (authorization === undefined || model === undefined) return undefined;
     const headers = typeof authorization === 'string' ? { authorization } : authorization;
-    // §5 of docs/pinning.md: an unknown pipeline gets both fields written, since
-    // the field a pipeline ignores is dropped rather than rejected.
-    const planner = { providerOptions: { gateway: { only: [PROBE_CHANNEL] } } };
-    const direct = { provider: { only: [PROBE_CHANNEL] } };
-    const pin = channels.pipeline === 'planner' ? planner
-      : channels.pipeline === 'direct' ? direct
-        : { ...planner, ...direct };
     return native(CLINE_CHAT.protocol + '//' + CLINE_CHAT.hostname + CLINE_CHAT.pathname, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json', accept: 'application/json' },
@@ -451,7 +424,7 @@ export function apply(ctx) {
         model,
         max_tokens: 1,
         messages: [{ role: 'user', content: 'hi' }],
-        ...pin,
+        ...fields,
       }),
       signal: AbortSignal.timeout(PROBE_TIMEOUT),
     });
@@ -476,36 +449,69 @@ export function apply(ctx) {
 
   /**
    * The channel list, probed at most once per TTL and never concurrently.
-   * @returns the list, its pipeline, and when it was taken.
+   *
+   * One attempt per pipeline shape, in `probeBodies`' order, stopping at the first answer
+   * that states a list. An attempt that states nothing is remembered as `attempt`, so the
+   * surfaces can say why instead of leaving "no channel list" unexplained — and a probe the
+   * user asked for by hand may come back sooner than the automatic retry floor.
+   * @param force - true for a user-requested probe.
+   * @returns the list, its pipeline, when it was taken, and the last attempt's outcome.
    */
-  const channelsFor = async () => {
+  const channelsFor = async (force) => {
+    const view = () => ({
+      pipeline: channels.pipeline,
+      list: channels.list,
+      at: channels.at,
+      attempt: channels.attempt,
+    });
     const now = Date.now();
     // A list is reused for the full TTL; a probe that produced nothing is retried
     // sooner, but still not on every open — each probe is a real (tiny) charge.
     const settled = channels.list.length > 0
       ? now - channels.at < CHANNELS_TTL
-      : now - channels.tried < CHANNELS_RETRY;
-    if (settled) return { pipeline: channels.pipeline, list: channels.list, at: channels.at };
+      : now - channels.tried < (force === true ? CHANNELS_FLOOR : CHANNELS_RETRY);
+    if (settled) return view();
     if (channels.pending !== undefined) return channels.pending;
     channels.tried = now;
     channels.pipeline = pipelineOf();
     channels.pending = (async () => {
+      let reason = '';
       try {
-        const response = await sendProbe();
-        if (response !== undefined) {
-          const found = channelListOf(await response.text());
+        for (const attempt of probeBodies(channels.pipeline)) {
+          const response = await sendProbe(attempt.fields);
+          if (response === undefined) {
+            reason = '没有可用于探测的密钥或模型';
+            break;
+          }
+          const text = await response.text();
+          const found = channelListOf(text);
           if (found.list.length > 0) {
             channels.list = found.list;
             channels.pipeline = found.pipeline === '' ? channels.pipeline : found.pipeline;
             channels.at = Date.now();
+            channels.attempt = { at: channels.at, pipeline: found.pipeline, ok: true, reason: '' };
+            reason = '';
+            break;
           }
+          reason = probeReasonOf(text, response.status);
+          channels.attempt = {
+            at: Date.now(),
+            pipeline: attempt.pipeline,
+            ok: false,
+            reason: reason === '' ? '网关没有报出渠道，也没有给出原因' : reason,
+          };
         }
-      } catch {
-        /* A failed probe leaves the previous list in place; the card just shows what it has. */
+      } catch (error) {
+        channels.attempt = {
+          at: Date.now(),
+          pipeline: channels.pipeline,
+          ok: false,
+          reason: error instanceof Error ? error.message : String(error),
+        };
       } finally {
         channels.pending = undefined;
       }
-      return { pipeline: channels.pipeline, list: channels.list, at: channels.at };
+      return view();
     })();
     return channels.pending;
   };
@@ -637,6 +643,17 @@ export function apply(ctx) {
     },
   });
   ctx.connection.fetch.register({
+    path: USAGE_PATH,
+    methods: ['GET'],
+    requestBody: 'buffered',
+    // The client's own poll is the rate limit; `?refresh=1` only asks the source to
+    // skip its cache, and the source still enforces its floor and its failure ladder.
+    fetch: async (request) => {
+      const refresh = new URL(request.url).searchParams.get('refresh') === '1';
+      return Response.json(await usage.read({ force: refresh }), { headers: { 'cache-control': 'no-store' } });
+    },
+  });
+  ctx.connection.fetch.register({
     path: ROUTE_PATH,
     methods: ['GET'],
     requestBody: 'buffered',
@@ -655,7 +672,12 @@ export function apply(ctx) {
     path: CHANNELS_PATH,
     methods: ['GET'],
     requestBody: 'buffered',
-    fetch: async () => Response.json(await channelsFor(), { headers: { 'cache-control': 'no-store' } }),
+    // `?refresh=1` is the user's own "probe again": it only shortens the wait after an
+    // empty probe (to a few seconds), never the TTL of a list that already exists.
+    fetch: async (request) => {
+      const refresh = new URL(request.url).searchParams.get('refresh') === '1';
+      return Response.json(await channelsFor(refresh), { headers: { 'cache-control': 'no-store' } });
+    },
   });
   ctx.on('session/event', (session, event) => {
     if (event?.type !== 'turn/start') return;
@@ -718,7 +740,14 @@ export function apply(ctx) {
         }
       }
       const response = await original(callInput, callInit);
-      if (target !== undefined) void observe(response.clone(), target.id, target.entry, (route) => noteRoute(route, applied));
+      if (target !== undefined) {
+        void observe(response.clone(), target.id, target.entry, (route) => {
+          noteRoute(route, applied);
+          // Real traffic just spent some of the account's windows: let the next look at
+          // the card find a warm snapshot. Throttled inside the source (five minutes).
+          usage.noteTraffic();
+        });
+      }
       return response;
     };
     globalThis.fetch = wrapped;
